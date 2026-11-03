@@ -1,0 +1,36 @@
+name: garage_log
+description: 純本地、無廣告、輕量化的汽機車油耗與保養記錄 App（Android / Windows）。
+publish_to: 'none'
+version: 0.1.0+1
+
+environment:
+  sdk: ^3.5.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+
+  # 本地資料庫（drift 2.32+ 搭配 sqlite3 3.x：SQLite 由 build hooks 自動打包，
+  # 不再需要 sqlite3_flutter_libs，該套件已 EOL）
+  drift: ^2.32.0
+  sqlite3: ^3.0.1
+  path_provider: ^2.1.5
+  path: ^1.9.0
+
+  uuid: ^4.5.1
+  fl_chart: ^1.0.0
+  flutter_riverpod: ^2.6.1
+  file_picker: ^10.1.0
+  intl: any
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+  build_runner: ^2.4.13
+  drift_dev: ^2.32.0
+
+flutter:
+  uses-material-design: true
