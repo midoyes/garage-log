@@ -59,7 +59,8 @@ class BackupService {
     if (decoded is! Map<String, dynamic> || decoded['app'] != appId) {
       throw const FormatException('這不是本 App 匯出的備份檔');
     }
-    final version = decoded['formatVersion'];
+    final data = decoded;
+    final version = data['formatVersion'];
     if (version is! int || version > formatVersion) {
       throw const FormatException('備份檔版本較新，請先更新 App');
     }
@@ -68,7 +69,7 @@ class BackupService {
     await db.transaction(() async {
       await _merge<$VehiclesTable, Vehicle>(
         db.vehicles,
-        decoded['vehicles'],
+        data['vehicles'],
         (m) => Vehicle.fromJson(m),
         (r) => r.id,
         (r) => r.updatedAt,
@@ -76,7 +77,7 @@ class BackupService {
       );
       await _merge<$FuelLogsTable, FuelLog>(
         db.fuelLogs,
-        decoded['fuelLogs'],
+        data['fuelLogs'],
         (m) => FuelLog.fromJson(m),
         (r) => r.id,
         (r) => r.updatedAt,
@@ -84,7 +85,7 @@ class BackupService {
       );
       await _merge<$MaintenanceRecordsTable, MaintenanceRecord>(
         db.maintenanceRecords,
-        decoded['maintenanceRecords'],
+        data['maintenanceRecords'],
         (m) => MaintenanceRecord.fromJson(m),
         (r) => r.id,
         (r) => r.updatedAt,
@@ -92,7 +93,7 @@ class BackupService {
       );
       await _merge<$MaintenanceItemsTable, MaintenanceItem>(
         db.maintenanceItems,
-        decoded['maintenanceItems'],
+        data['maintenanceItems'],
         (m) => MaintenanceItem.fromJson(m),
         (r) => r.id,
         (r) => r.updatedAt,
