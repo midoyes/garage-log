@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'navigation.dart';
 
-const kAppVersion = '0.2.2';
+const kAppVersion = '0.2.3';
 
 /// 油品選項。
 const kFuelTypes = <String>['92', '95', '98', '柴油', '其他'];
@@ -283,4 +283,15 @@ class FilterBar extends StatelessWidget {
       ),
     );
   }
+}
+
+/// 里程欄位下方的提示：依「所選日期」顯示前後紀錄的里程範圍。
+String? odometerHelperText(double? prevMax, double? nextMin) {
+  String km(double v) => v.toStringAsFixed(v == v.roundToDouble() ? 0 : 1);
+  if (prevMax != null && nextMin != null) {
+    return '這個日期的里程應介於 ${km(prevMax)} ～ ${km(nextMin)} km 之間';
+  }
+  if (prevMax != null) return '這個日期之前最近的紀錄是 ${km(prevMax)} km，里程不可更小';
+  if (nextMin != null) return '這個日期之後最近的紀錄是 ${km(nextMin)} km，里程不可更大';
+  return null;
 }

@@ -189,6 +189,16 @@ class SettingsPage extends ConsumerWidget {
         ),
         const SizedBox(height: 8),
         Card(
+          child: SwitchListTile(
+            secondary: const Icon(Icons.local_gas_station_outlined),
+            title: const Text('首頁顯示今日油價'),
+            subtitle: const Text('向台灣中油公開網址讀取牌價（只讀取，不上傳任何資料）。關閉後 App 完全不連網。'),
+            value: ref.watch(fuelPriceEnabledProvider),
+            onChanged: (v) => ref.read(fuelPriceEnabledProvider.notifier).set(v),
+          ),
+        ),
+        const SizedBox(height: 8),
+        Card(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [

@@ -56,6 +56,7 @@ class DashboardPage extends ConsumerWidget {
       monthMaint: monthMaint,
     );
     final quick = _QuickActions(vehicle: vehicle);
+    const priceCard = _FuelPriceCard();
     final reminderCard = _ReminderSection(reminders: reminders);
     final recent = _RecentSection(logs: logs, maint: maint);
 
@@ -68,7 +69,7 @@ class DashboardPage extends ConsumerWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Expanded(
-                  child: Column(children: [header, const SizedBox(height: 12), quick]),
+                  child: Column(children: [header, const SizedBox(height: 12), priceCard, const SizedBox(height: 12), quick]),
                 ),
                 const SizedBox(width: 16),
                 Expanded(
@@ -84,6 +85,8 @@ class DashboardPage extends ConsumerWidget {
           padding: const EdgeInsets.all(16),
           children: [
             header,
+            const SizedBox(height: 12),
+            priceCard,
             const SizedBox(height: 12),
             quick,
             const SizedBox(height: 12),
@@ -393,6 +396,101 @@ class _RecentSection extends StatelessWidget {
                 trailing: Text('\$${fmtMoney(i.amount)}',
                     style: theme.textTheme.titleSmall),
               ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 今日油價（中油公開牌價）。關閉或取不到資料時安靜降級，不影響其他功能。
+class _FuelPriceCard extends ConsumerWidget {
+  const _FuelPriceCard();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    if (!ref.watch(fuelPriceEnabledProvider)) return const SizedBox.shrink();
+    final theme = Theme.of(context);
+    final async = ref.watch(fuelPriceProvider);
+    final colors = [
+      Colors.red.shade400,
+      Colors.orange.shade600,
+      Colors.green.shade600,
+      Colors.blueGrey.shade500,
+    ];
+
+    Widget body;
+    if (async.isLoading) {
+      body = const Padding(
+        padding: EdgeInsets.symmetric(vertical: 12),
+        child: Center(child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))),
+      );
+    } else {
+      final snap = async.valueOrNull;
+      if (snap == null) {
+        body = Row(
+          children: [
+            Expanded(
+              child: Text('目前取不到油價（可能沒有網路）',
+                  style: TextStyle(color: theme.colorScheme.outline)),
+            ),
+            TextButton(
+              onPressed: () => ref.invalidate(fuelPriceProvider),
+              child: const Text('重試'),
+            ),
+          ],
+        );
+      } else {
+        final info = StringBuffer('來源：台灣中油');
+        if (snap.effective != null) info.write('　生效：${snap.effective}');
+        if (snap.fromCache) {
+          final t = snap.fetchedAt;
+          info.write('　（離線，上次更新 ${t.month}/${t.day}）');
+        }
+        body = Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                for (var i = 0; i < snap.prices.length; i++)
+                  Expanded(
+                    child: Column(
+                      children: [
+                        Text(snap.prices[i].name,
+                            textAlign: TextAlign.center,
+                            style: theme.textTheme.bodySmall),
+                        const SizedBox(height: 4),
+                        Text(snap.prices[i].price.toStringAsFixed(1),
+                            style: theme.textTheme.titleLarge?.copyWith(
+                                color: colors[i % colors.length],
+                                fontWeight: FontWeight.bold)),
+                      ],
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(info.toString(), style: theme.textTheme.bodySmall),
+          ],
+        );
+      }
+    }
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.local_gas_station_outlined, size: 20),
+                const SizedBox(width: 6),
+                Text('今日油價', style: theme.textTheme.titleMedium),
+              ],
+            ),
+            const SizedBox(height: 8),
+            body,
           ],
         ),
       ),

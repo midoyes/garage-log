@@ -49,6 +49,14 @@ def android() -> None:
         warn("AndroidManifest.xml 找不到 android:label，桌面名稱維持預設")
     else:
         manifest.write_text(new, encoding="utf-8")
+    # 今日油價需要網路；Flutter 範本只在 debug/profile 的 manifest 有 INTERNET，release 要自己加
+    text = manifest.read_text(encoding="utf-8")
+    perm = '<uses-permission android:name="android.permission.INTERNET"/>'
+    if perm not in text:
+        if "<application" not in text:
+            fail("AndroidManifest.xml 找不到 <application，無法加入網路權限")
+        text = text.replace("<application", perm + "\n    <application", 1)
+        manifest.write_text(text, encoding="utf-8")
     print("Android 圖示與名稱已套用")
 
 

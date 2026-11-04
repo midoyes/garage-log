@@ -8,6 +8,7 @@ import 'data/backup_service.dart';
 import 'data/connection.dart';
 import 'data/csv_export.dart';
 import 'data/database.dart';
+import 'data/fuel_price_service.dart';
 import 'data/repository.dart';
 import 'data/sync_service.dart';
 import 'domain/reminders.dart';
@@ -197,3 +198,39 @@ final remindersProvider = Provider<List<ReminderResult>>((ref) {
 
 /// 統計頁期間：3 / 12 = 最近幾個月，0 = 全部。
 final statsPeriodProvider = StateProvider<int>((ref) => 12);
+
+
+/// 是否顯示/抓取今日油價（預設開；可在設定關閉，關閉後完全不連網）。
+class FuelPriceEnabledNotifier extends StateNotifier<bool> {
+  FuelPriceEnabledNotifier() : super(true) {
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final v = prefs.getBool(FuelPriceService.enabledKey);
+      if (mounted && v != null) state = v;
+    } catch (_) {}
+  }
+
+  Future<void> set(bool v) async {
+    state = v;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(FuelPriceService.enabledKey, v);
+    } catch (_) {}
+  }
+}
+
+final fuelPriceEnabledProvider =
+    StateNotifierProvider<FuelPriceEnabledNotifier, bool>(
+        (ref) => FuelPriceEnabledNotifier());
+
+final fuelPriceServiceProvider = Provider((ref) => FuelPriceService());
+
+/// 今日油價。關閉時不連網、回傳 null。
+final fuelPriceProvider = FutureProvider<FuelPriceSnapshot?>((ref) async {
+  if (!ref.watch(fuelPriceEnabledProvider)) return null;
+  return ref.read(fuelPriceServiceProvider).fetch();
+});

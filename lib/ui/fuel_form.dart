@@ -48,7 +48,7 @@ class _FuelFormPageState extends ConsumerState<FuelFormPage> {
     _liters = TextEditingController(text: l == null ? '' : trimNum(l.liters));
     _amount = TextEditingController(text: l == null ? '' : trimNum(l.amount));
     _price = TextEditingController(
-      text: (l == null || l.unitPrice <= 0) ? '' : trimNum(l.unitPrice),
+      text: (l == null || l.unitPrice <= 0) ? '' : l.unitPrice.toStringAsFixed(2),
     );
     _note = TextEditingController(text: l?.note ?? '');
   }
@@ -72,7 +72,8 @@ class _FuelFormPageState extends ConsumerState<FuelFormPage> {
       if (p != null) _amount.text = trimNum(l * p, digits: 2);
     } else {
       final a = parseNumber(_amount.text);
-      if (a != null) _price.text = trimNum(a / l, digits: 2);
+      // 單價固定顯示兩位小數（31.90 而不是 31.9）
+      if (a != null) _price.text = (a / l).toStringAsFixed(2);
     }
   }
 
@@ -83,7 +84,7 @@ class _FuelFormPageState extends ConsumerState<FuelFormPage> {
       firstDate: DateTime(2000),
       lastDate: DateTime.now().add(const Duration(days: 1)),
     );
-    if (picked != null) setState(() => _date = picked);
+    if (picked != null) setState(() => _date = picked); // 日期一變，下方的里程範圍提示跟著更新
   }
 
   Future<void> _save() async {
@@ -107,26 +108,40 @@ class _FuelFormPageState extends ConsumerState<FuelFormPage> {
     }
   }
 
+  /// 這台車所有加油 + 保養的里程讀數（跨類型一起判定）。
+  List<OdometerReading> _allReadings() {
+    final logs = ref.read(fuelLogsProvider).valueOrNull ?? const <FuelLog>[];
+    final maint =
+        ref.read(maintenanceProvider).valueOrNull ?? const <MaintenanceWithItems>[];
+    return [
+      for (final l in logs)
+        OdometerReading(
+          id: l.id,
+          date: DateTime.fromMillisecondsSinceEpoch(l.date),
+          odometer: l.odometer,
+          label: '加油',
+        ),
+      for (final m in maint)
+        OdometerReading(
+          id: m.record.id,
+          date: DateTime.fromMillisecondsSinceEpoch(m.record.date),
+          odometer: m.record.odometer,
+          label: '保養',
+        ),
+    ];
+  }
+
   @override
   Widget build(BuildContext context) {
-    final logs = ref.watch(fuelLogsProvider).valueOrNull ?? const <FuelLog>[];
+    ref.watch(fuelLogsProvider);
+    ref.watch(maintenanceProvider);
     // 依「所選日期」顯示前後紀錄的里程範圍（補登舊紀錄時不會被最新里程誤導）
-    final bounds = fuelOdometerBounds(
-      existing: logs.map(fuelLogToEntry),
+    final bounds = odometerBounds(
+      readings: _allReadings(),
       date: _date,
       excludeId: widget.log?.id,
     );
-    final String? odoHelper;
-    if (bounds.prevMax != null && bounds.nextMin != null) {
-      odoHelper = '這一天的里程需介於 ${fmtKm(bounds.prevMax!)} ～ '
-          '${fmtKm(bounds.nextMin!)} km 之間（不含兩端）';
-    } else if (bounds.prevMax != null) {
-      odoHelper = '前一筆：${fmtKm(bounds.prevMax!)} km，這次必須比它大';
-    } else if (bounds.nextMin != null) {
-      odoHelper = '後一筆：${fmtKm(bounds.nextMin!)} km，這次必須比它小';
-    } else {
-      odoHelper = null;
-    }
+    final odoHelper = odometerHelperText(bounds.prevMax, bounds.nextMin);
     final theme = Theme.of(context);
 
     return FormScaffold(
@@ -157,7 +172,17 @@ class _FuelFormPageState extends ConsumerState<FuelFormPage> {
                 autofocus: widget.log == null,
                 decoration: fieldDecoration('里程', suffix: 'km')
                     .copyWith(helperText: odoHelper, helperMaxLines: 2),
-                validator: nonNegativeNumber,
+                validator: (v) {
+                  final err = nonNegativeNumber(v);
+                  if (err != null) return err;
+                  return validateOdometerByDate(
+                    readings: _allReadings(),
+                    date: _date,
+                    odometer: parseNumber(v)!,
+                    initialOdometer: widget.vehicle.initialOdometer,
+                    excludeId: widget.log?.id,
+                  );
+                },
               ),
               const SizedBox(height: 16),
               TextFormField(

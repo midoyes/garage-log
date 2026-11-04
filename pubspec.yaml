@@ -1,7 +1,7 @@
 name: garage_log
 description: 純本地、無廣告、輕量化的汽機車油耗與保養記錄 App（Android / Windows）。
 publish_to: 'none'
-version: 0.2.2+4
+version: 0.2.3+5
 
 environment:
   sdk: ^3.5.0
@@ -23,6 +23,7 @@ dependencies:
   fl_chart: ^1.0.0
   flutter_riverpod: ^2.6.1
   file_picker: ^10.1.0
+  xml: ^6.5.0
   shared_preferences: ^2.3.3
   intl: any
 

@@ -86,6 +86,25 @@ class GarageRepository {
         updates: {table},
       );
 
+  Future<List<OdometerReading>> _maintenanceReadings(
+    String vehicleId, {
+    String? excludeId,
+  }) async {
+    final rows = await (db.select(db.maintenanceRecords)
+          ..where((t) => t.vehicleId.equals(vehicleId) & t.isDeleted.equals(false)))
+        .get();
+    return [
+      for (final r in rows)
+        if (r.id != excludeId)
+          OdometerReading(
+            id: r.id,
+            date: DateTime.fromMillisecondsSinceEpoch(r.date),
+            odometer: r.odometer,
+            label: '保養',
+          ),
+    ];
+  }
+
   Future<Vehicle> _requireVehicle(String vehicleId) async {
     final v = await (db.select(db.vehicles)
           ..where((t) => t.id.equals(vehicleId)))
@@ -268,7 +287,18 @@ class GarageRepository {
     );
     if (error != null) throw GarageValidationException(error);
 
-    final price = unitPrice ?? (amount / liters);
+    // 再和保養紀錄的里程對照（依日期判定，可以相等）
+    final maintReadings = await _maintenanceReadings(vehicleId);
+    final crossError = validateOdometerByDate(
+      readings: maintReadings,
+      date: date,
+      odometer: odometer,
+      initialOdometer: vehicle.initialOdometer,
+    );
+    if (crossError != null) throw GarageValidationException(crossError);
+
+    // 單價統一四捨五入到小數 2 位（與表單顯示一致）
+    final price = double.parse((unitPrice ?? (amount / liters)).toStringAsFixed(2));
     final now = current == null ? _now() : _stamp(current.updatedAt);
 
     if (id == null) {
@@ -391,7 +421,28 @@ class GarageRepository {
     final recordId = id ?? _uuid.v4();
 
     await db.transaction(() async {
-      await _requireVehicle(vehicleId);
+      final vehicle = await _requireVehicle(vehicleId);
+
+      // 依日期判定里程：和同一台車所有加油、其他保養紀錄的前後讀數比對
+      final fuelRows = await (db.select(db.fuelLogs)
+            ..where((t) => t.vehicleId.equals(vehicleId) & t.isDeleted.equals(false)))
+          .get();
+      final odoError = validateOdometerByDate(
+        readings: [
+          for (final l in fuelRows)
+            OdometerReading(
+              id: l.id,
+              date: DateTime.fromMillisecondsSinceEpoch(l.date),
+              odometer: l.odometer,
+              label: '加油',
+            ),
+          ...await _maintenanceReadings(vehicleId, excludeId: id),
+        ],
+        date: date,
+        odometer: odometer,
+        initialOdometer: vehicle.initialOdometer,
+      );
+      if (odoError != null) throw GarageValidationException(odoError);
 
       // 編輯時：保養單必須存在、未刪除、且屬於指定車輛
       MaintenanceRecord? current;

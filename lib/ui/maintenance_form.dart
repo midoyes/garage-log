@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../data/database.dart';
 import '../data/repository.dart';
+import '../domain/fuel_calculator.dart';
 import '../domain/maintenance_calculator.dart';
 import '../providers.dart';
 import 'common.dart';
@@ -55,6 +56,9 @@ class _MaintenanceFormPageState extends ConsumerState<MaintenanceFormPage> {
   late final TextEditingController _note;
   late DateTime _date;
   final List<_Row> _rows = [];
+
+  /// 使用者是否自己動過里程欄位（動過就不再依日期自動帶入）
+  bool _odoTouched = false;
 
   @override
   void initState() {
@@ -118,7 +122,39 @@ class _MaintenanceFormPageState extends ConsumerState<MaintenanceFormPage> {
       firstDate: DateTime(2000),
       lastDate: DateTime.now().add(const Duration(days: 1)),
     );
-    if (picked != null) setState(() => _date = picked);
+    if (picked == null) return;
+    setState(() {
+      _date = picked;
+      // 新增時、使用者還沒自己填里程：依新日期帶入「該日期之前最近的里程」，
+      // 不再沿用目前最新里程（補登舊紀錄時那個值一定是錯的）。
+      if (widget.existing == null && !_odoTouched) {
+        final b = odometerBounds(readings: _readings(), date: _date);
+        _odo.text = b.prevMax == null ? '' : trimNum(b.prevMax!);
+      }
+    });
+  }
+
+  /// 這台車所有加油 + 保養的里程讀數（跨類型一起判定）。
+  List<OdometerReading> _readings() {
+    final logs = ref.read(fuelLogsProvider).valueOrNull ?? const <FuelLog>[];
+    final maint =
+        ref.read(maintenanceProvider).valueOrNull ?? const <MaintenanceWithItems>[];
+    return [
+      for (final l in logs)
+        OdometerReading(
+          id: l.id,
+          date: DateTime.fromMillisecondsSinceEpoch(l.date),
+          odometer: l.odometer,
+          label: '加油',
+        ),
+      for (final m in maint)
+        OdometerReading(
+          id: m.record.id,
+          date: DateTime.fromMillisecondsSinceEpoch(m.record.date),
+          odometer: m.record.odometer,
+          label: '保養',
+        ),
+    ];
   }
 
   void _addRow([String name = '']) {
@@ -154,6 +190,14 @@ class _MaintenanceFormPageState extends ConsumerState<MaintenanceFormPage> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    ref.watch(fuelLogsProvider);
+    ref.watch(maintenanceProvider);
+    final bounds = odometerBounds(
+      readings: _readings(),
+      date: _date,
+      excludeId: widget.existing?.record.id,
+    );
+    final odoHelper = odometerHelperText(bounds.prevMax, bounds.nextMin);
     return FormScaffold(
       title: widget.existing == null ? '新增保養' : '編輯保養',
       onSave: _save,
@@ -186,8 +230,20 @@ class _MaintenanceFormPageState extends ConsumerState<MaintenanceFormPage> {
               TextFormField(
                 controller: _odo,
                 keyboardType: numberKeyboard,
-                decoration: fieldDecoration('目前里程', suffix: 'km'),
-                validator: nonNegativeNumber,
+                decoration: fieldDecoration('里程', suffix: 'km')
+                    .copyWith(helperText: odoHelper, helperMaxLines: 2),
+                onChanged: (_) => _odoTouched = true,
+                validator: (v) {
+                  final err = nonNegativeNumber(v);
+                  if (err != null) return err;
+                  return validateOdometerByDate(
+                    readings: _readings(),
+                    date: _date,
+                    odometer: parseNumber(v)!,
+                    initialOdometer: widget.vehicle.initialOdometer,
+                    excludeId: widget.existing?.record.id,
+                  );
+                },
               ),
               const SizedBox(height: 20),
               Text('常用項目（點一下加入）', style: theme.textTheme.titleSmall),

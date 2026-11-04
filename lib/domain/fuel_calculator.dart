@@ -175,3 +175,91 @@ String? validateFuelOdometer({
   }
   return null;
 }
+
+
+/// 一筆「里程讀數」（加油或保養都算），用來做跨類型的日期判定。
+class OdometerReading {
+  const OdometerReading({
+    required this.id,
+    required this.date,
+    required this.odometer,
+    required this.label,
+  });
+
+  final String id;
+  final DateTime date;
+  final double odometer;
+
+  /// 來源說明，用在錯誤訊息，例如「加油」「保養」
+  final String label;
+}
+
+/// 某個日期的里程可填範圍（**所有**加油與保養紀錄一起看）：
+/// [prevMax] 是更早日期的最大里程，[nextMin] 是更晚日期的最小里程。
+/// 同一天的紀錄不構成限制。編輯時用 [excludeId] 排除自己。
+({double? prevMax, double? nextMin}) odometerBounds({
+  required Iterable<OdometerReading> readings,
+  required DateTime date,
+  String? excludeId,
+}) {
+  final day = DateTime(date.year, date.month, date.day);
+  double? prevMax;
+  double? nextMin;
+  for (final r in readings) {
+    if (r.id == excludeId) continue;
+    final d = DateTime(r.date.year, r.date.month, r.date.day);
+    if (d.isBefore(day)) {
+      prevMax = prevMax == null ? r.odometer : math.max(prevMax, r.odometer);
+    } else if (d.isAfter(day)) {
+      nextMin = nextMin == null ? r.odometer : math.min(nextMin, r.odometer);
+    }
+  }
+  return (prevMax: prevMax, nextMin: nextMin);
+}
+
+/// 以「日期」判定里程是否合理：先看選的日期，再和前後紀錄比。
+///
+/// - 不可小於更早日期的任何讀數、不可大於更晚日期的任何讀數（可以相等：
+///   同一天加油又保養、或兩次紀錄之間沒開車都是正常的）
+/// - 沒有更早的讀數時，不可小於車輛初始里程
+/// - 同一天的紀錄不互相限制
+///
+/// 合法回傳 null，否則回傳要給使用者看的錯誤訊息。
+String? validateOdometerByDate({
+  required Iterable<OdometerReading> readings,
+  required DateTime date,
+  required double odometer,
+  double initialOdometer = 0,
+  String? excludeId,
+}) {
+  if (!odometer.isFinite || odometer < 0) return '里程必須是不小於 0 的數字';
+  final day = DateTime(date.year, date.month, date.day);
+
+  OdometerReading? prev; // 更早日期中里程最大的那筆
+  OdometerReading? next; // 更晚日期中里程最小的那筆
+  for (final r in readings) {
+    if (r.id == excludeId) continue;
+    final d = DateTime(r.date.year, r.date.month, r.date.day);
+    if (d.isBefore(day)) {
+      if (prev == null || r.odometer > prev.odometer) prev = r;
+    } else if (d.isAfter(day)) {
+      if (next == null || r.odometer < next.odometer) next = r;
+    }
+  }
+
+  String when(OdometerReading r) =>
+      '${r.date.year}-${r.date.month.toString().padLeft(2, '0')}-${r.date.day.toString().padLeft(2, '0')}';
+
+  if (prev == null && odometer < initialOdometer) {
+    return '里程不可小於車輛初始里程（${_km(initialOdometer)} km）';
+  }
+  if (prev != null && odometer < prev.odometer) {
+    return '這個日期之前的${prev.label}紀錄（${when(prev)}）已經是 ${_km(prev.odometer)} km，'
+        '里程不可以更小。要補登舊紀錄，請先把日期改成當時的日期。';
+  }
+  if (next != null && odometer > next.odometer) {
+    return '這個日期之後的${next.label}紀錄（${when(next)}）只有 ${_km(next.odometer)} km，'
+        '里程不可以更大。請確認日期與里程。';
+  }
+  return null;
+}
