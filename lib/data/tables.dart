@@ -25,6 +25,9 @@ class Vehicles extends Table with SyncColumns {
   TextColumn get name => text()();
   TextColumn get plate => text().withDefault(const Constant(''))();
   RealColumn get initialOdometer => real().withDefault(const Constant(0.0))();
+
+  /// 這台車預設油品（92 / 95 / 98 / 柴油 / 其他；空字串 = 未設定）。v2 新增。
+  TextColumn get defaultFuelType => text().withDefault(const Constant(''))();
 }
 
 /// 加油紀錄。date 為當日 00:00（本地時間）的 epoch 毫秒。
@@ -41,6 +44,9 @@ class FuelLogs extends Table with SyncColumns {
   /// 是否「跳停」（加滿）。油耗以跳停為區間基準。
   BoolColumn get isFullTank => boolean().withDefault(const Constant(true))();
   TextColumn get note => text().withDefault(const Constant(''))();
+
+  /// 油品（92 / 95 / 98 / 柴油 / 其他；空字串 = 未記錄）。v2 新增。
+  TextColumn get fuelType => text().withDefault(const Constant(''))();
 }
 
 /// 保養維修單（主檔）。totalAmount 由明細累加後寫入，方便統計查詢。
@@ -63,4 +69,19 @@ class MaintenanceItems extends Table with SyncColumns {
   RealColumn get quantity => real().withDefault(const Constant(1.0))();
   RealColumn get unitPrice => real().withDefault(const Constant(0.0))();
   IntColumn get sortOrder => integer().withDefault(const Constant(0))();
+}
+
+/// 保養週期設定（也兼作「自訂常用項目」：週期都是 0 就只是常用項目）。v2 新增。
+///
+/// 以 [name] 與保養明細的項目名稱（正規化後）比對，找出該零件最後一次更換。
+@TableIndex(name: 'idx_plans_vehicle', columns: {#vehicleId})
+class MaintenancePlans extends Table with SyncColumns {
+  TextColumn get vehicleId => text()();
+  TextColumn get name => text()();
+
+  /// 里程週期（km）；0 = 不依里程提醒
+  RealColumn get intervalKm => real().withDefault(const Constant(0.0))();
+
+  /// 日期週期（天）；0 = 不依日期提醒
+  IntColumn get intervalDays => integer().withDefault(const Constant(0))();
 }

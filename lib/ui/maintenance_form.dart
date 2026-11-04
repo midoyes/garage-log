@@ -20,14 +20,15 @@ class _Row {
   final TextEditingController qty;
   final TextEditingController price;
 
-  double get quantity => double.tryParse(qty.text.trim()) ?? 0;
-  double get unitPrice => double.tryParse(price.text.trim()) ?? 0;
+  /// 完全沒填（名稱與單價都空）的列：儲存時直接略過，不當成錯誤。
+  bool get isBlank => name.text.trim().isEmpty && price.text.trim().isEmpty;
 
+  /// 無法解析的數字會變成 NaN（而不是默默變成 0），交給驗證擋下。
   ItemInput toInput() => ItemInput(
         id: id,
         name: name.text.trim(),
-        quantity: quantity,
-        unitPrice: unitPrice,
+        quantity: parseNumber(qty.text) ?? double.nan,
+        unitPrice: parseNumber(price.text) ?? double.nan,
       );
 
   void dispose() {
@@ -62,7 +63,14 @@ class _MaintenanceFormPageState extends ConsumerState<MaintenanceFormPage> {
     _date = e == null
         ? DateTime.now()
         : DateTime.fromMillisecondsSinceEpoch(e.record.date);
-    _odo = TextEditingController(text: e == null ? '' : trimNum(e.record.odometer));
+
+    // 新增時預帶目前里程（可修改），減少輸入。
+    final currentOdo = ref.read(currentOdometerProvider);
+    _odo = TextEditingController(
+      text: e != null
+          ? trimNum(e.record.odometer)
+          : (currentOdo != null && currentOdo > 0 ? trimNum(currentOdo) : ''),
+    );
     _note = TextEditingController(text: e?.record.note ?? '');
     if (e != null) {
       for (final i in e.items) {
@@ -70,7 +78,7 @@ class _MaintenanceFormPageState extends ConsumerState<MaintenanceFormPage> {
           id: i.id,
           name: i.name,
           qty: trimNum(i.quantity),
-          price: trimNum(i.unitPrice),
+          price: trimNum(i.unitPrice, digits: 2),
         ));
       }
     }
@@ -86,7 +94,22 @@ class _MaintenanceFormPageState extends ConsumerState<MaintenanceFormPage> {
     super.dispose();
   }
 
-  double get _total => computeItemsTotal(_rows.map((r) => r.toInput()));
+  double get _total =>
+      computeItemsTotal(_rows.where((r) => !r.isBlank).map((r) => r.toInput()));
+
+  /// 常用項目：這台車自訂的（保養週期設定）優先，再接車種預設，名稱不重複。
+  List<String> _quickItems() {
+    final plans = ref.watch(plansProvider).valueOrNull ?? const <MaintenancePlan>[];
+    final seen = <String>{};
+    final result = <String>[];
+    for (final name in [
+      for (final p in plans) p.name,
+      ...quickItemsFor(widget.vehicle.type),
+    ]) {
+      if (seen.add(normalizeItemName(name))) result.add(name);
+    }
+    return result;
+  }
 
   Future<void> _pickDate() async {
     final picked = await showDatePicker(
@@ -104,7 +127,8 @@ class _MaintenanceFormPageState extends ConsumerState<MaintenanceFormPage> {
 
   void _removeRow(_Row row) {
     setState(() => _rows.remove(row));
-    row.dispose();
+    // 先讓畫面重建完，再釋放 controller，避免畫面還在使用。
+    WidgetsBinding.instance.addPostFrameCallback((_) => row.dispose());
   }
 
   Future<void> _save() async {
@@ -114,8 +138,11 @@ class _MaintenanceFormPageState extends ConsumerState<MaintenanceFormPage> {
             id: widget.existing?.record.id,
             vehicleId: widget.vehicle.id,
             date: _date,
-            odometer: double.tryParse(_odo.text.trim()) ?? 0,
-            items: _rows.map((r) => r.toInput()).toList(),
+            odometer: parseNumber(_odo.text)!,
+            items: [
+              for (final r in _rows)
+                if (!r.isBlank) r.toInput(),
+            ],
             note: _note.text,
           );
       if (mounted) Navigator.of(context).pop();
@@ -130,20 +157,12 @@ class _MaintenanceFormPageState extends ConsumerState<MaintenanceFormPage> {
     return FormScaffold(
       title: widget.existing == null ? '新增保養' : '編輯保養',
       onSave: _save,
-      bottom: SafeArea(
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-          decoration: BoxDecoration(
-            color: theme.colorScheme.surfaceContainerHighest,
-          ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text('總金額', style: theme.textTheme.titleMedium),
-              Text('\$${fmtMoney(_total)}', style: theme.textTheme.headlineSmall),
-            ],
-          ),
-        ),
+      bottom: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text('總金額', style: theme.textTheme.titleMedium),
+          Text('\$${fmtMoney(_total)}', style: theme.textTheme.headlineSmall),
+        ],
       ),
       children: [
         Form(
@@ -168,7 +187,7 @@ class _MaintenanceFormPageState extends ConsumerState<MaintenanceFormPage> {
                 controller: _odo,
                 keyboardType: numberKeyboard,
                 decoration: fieldDecoration('目前里程', suffix: 'km'),
-                validator: requiredNumber,
+                validator: nonNegativeNumber,
               ),
               const SizedBox(height: 20),
               Text('常用項目（點一下加入）', style: theme.textTheme.titleSmall),
@@ -177,7 +196,7 @@ class _MaintenanceFormPageState extends ConsumerState<MaintenanceFormPage> {
                 spacing: 8,
                 runSpacing: 8,
                 children: [
-                  for (final n in kQuickMaintenanceItems)
+                  for (final n in _quickItems())
                     ActionChip(label: Text(n), onPressed: () => _addRow(n)),
                 ],
               ),
@@ -223,6 +242,7 @@ class _MaintenanceFormPageState extends ConsumerState<MaintenanceFormPage> {
   }
 }
 
+/// 單一明細：名稱 / 數量＋單價 / 小計，上下分層，手機窄螢幕也不會擠在一行。
 class _ItemEditor extends StatelessWidget {
   const _ItemEditor({
     super.key,
@@ -237,11 +257,13 @@ class _ItemEditor extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     return Card(
       margin: const EdgeInsets.only(top: 8),
       child: Padding(
         padding: const EdgeInsets.fromLTRB(12, 12, 4, 12),
         child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Row(
               children: [
@@ -249,6 +271,10 @@ class _ItemEditor extends StatelessWidget {
                   child: TextFormField(
                     controller: row.name,
                     decoration: fieldDecoration('項目名稱'),
+                    onChanged: (_) => onChanged(),
+                    validator: (v) => row.isBlank
+                        ? null
+                        : ((v == null || v.trim().isEmpty) ? '請輸入項目名稱' : null),
                   ),
                 ),
                 IconButton(
@@ -259,37 +285,48 @@ class _ItemEditor extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 12),
-            Row(
-              children: [
-                SizedBox(
-                  width: 84,
-                  child: TextFormField(
-                    controller: row.qty,
-                    keyboardType: numberKeyboard,
-                    decoration: fieldDecoration('數量'),
-                    onChanged: (_) => onChanged(),
+            Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    flex: 2,
+                    child: TextFormField(
+                      controller: row.qty,
+                      keyboardType: numberKeyboard,
+                      decoration: fieldDecoration('數量'),
+                      onChanged: (_) => onChanged(),
+                      validator: (v) => row.isBlank ? null : positiveNumber(v),
+                    ),
                   ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: TextFormField(
-                    controller: row.price,
-                    keyboardType: numberKeyboard,
-                    decoration: fieldDecoration('單價', suffix: '\$'),
-                    onChanged: (_) => onChanged(),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    flex: 3,
+                    child: TextFormField(
+                      controller: row.price,
+                      keyboardType: numberKeyboard,
+                      decoration: fieldDecoration('單價', suffix: '\$'),
+                      onChanged: (_) => onChanged(),
+                      validator: (v) => row.isBlank ? null : nonNegativeNumber(v),
+                    ),
                   ),
-                ),
-                const SizedBox(width: 12),
-                SizedBox(
-                  width: 84,
-                  child: Text(
+                ],
+              ),
+            ),
+            const SizedBox(height: 8),
+            Padding(
+              padding: const EdgeInsets.only(right: 12),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  Text('小計  ', style: theme.textTheme.bodyMedium),
+                  Text(
                     '\$${fmtMoney(row.toInput().subtotal)}',
-                    textAlign: TextAlign.end,
-                    style: Theme.of(context).textTheme.titleMedium,
+                    style: theme.textTheme.titleMedium,
                   ),
-                ),
-                const SizedBox(width: 8),
-              ],
+                ],
+              ),
             ),
           ],
         ),

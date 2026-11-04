@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../data/database.dart';
+import '../data/repository.dart';
 import '../providers.dart';
 import 'common.dart';
 import 'format.dart';
@@ -21,12 +22,14 @@ class _VehicleFormPageState extends ConsumerState<VehicleFormPage> {
   late final TextEditingController _plate;
   late final TextEditingController _odo;
   late int _type;
+  late String _fuelType;
 
   @override
   void initState() {
     super.initState();
     final v = widget.vehicle;
     _type = v?.type ?? 0;
+    _fuelType = v?.defaultFuelType ?? '';
     _name = TextEditingController(text: v?.name ?? '');
     _plate = TextEditingController(text: v?.plate ?? '');
     _odo = TextEditingController(text: v == null ? '0' : trimNum(v.initialOdometer));
@@ -43,27 +46,33 @@ class _VehicleFormPageState extends ConsumerState<VehicleFormPage> {
   Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
     final repo = ref.read(repoProvider);
-    final odo = double.parse(_odo.text.trim());
+    final odo = parseNumber(_odo.text)!;
     final v = widget.vehicle;
-    if (v == null) {
-      final id = await repo.addVehicle(
-        type: _type,
-        name: _name.text,
-        plate: _plate.text,
-        initialOdometer: odo,
-      );
-      // 第一台車自動成為目前車輛；之後新增的車也直接切換過去。
-      ref.read(selectedVehicleIdProvider.notifier).state = id;
-    } else {
-      await repo.updateVehicle(
-        v.id,
-        type: _type,
-        name: _name.text,
-        plate: _plate.text,
-        initialOdometer: odo,
-      );
+    try {
+      if (v == null) {
+        final id = await repo.addVehicle(
+          type: _type,
+          name: _name.text,
+          plate: _plate.text,
+          initialOdometer: odo,
+          defaultFuelType: _fuelType,
+        );
+        // 新增的車直接切換過去（也會記住，下次開啟 App 仍是這台）。
+        await ref.read(selectedVehicleIdProvider.notifier).select(id);
+      } else {
+        await repo.updateVehicle(
+          v.id,
+          type: _type,
+          name: _name.text,
+          plate: _plate.text,
+          initialOdometer: odo,
+          defaultFuelType: _fuelType,
+        );
+      }
+      if (mounted) Navigator.of(context).pop();
+    } on GarageValidationException catch (e) {
+      if (mounted) showSnack(context, e.message);
     }
-    if (mounted) Navigator.of(context).pop();
   }
 
   @override
@@ -105,11 +114,23 @@ class _VehicleFormPageState extends ConsumerState<VehicleFormPage> {
                 controller: _odo,
                 keyboardType: numberKeyboard,
                 decoration: fieldDecoration('初始里程', suffix: 'km'),
-                validator: (v) {
-                  final err = requiredNumber(v);
-                  if (err != null) return err;
-                  return double.parse(v!.trim()) < 0 ? '不可為負數' : null;
-                },
+                validator: nonNegativeNumber,
+              ),
+              const SizedBox(height: 20),
+              Text('預設油品（加油時自動帶入）',
+                  style: Theme.of(context).textTheme.titleSmall),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  for (final t in kFuelTypes)
+                    ChoiceChip(
+                      label: Text(t),
+                      selected: _fuelType == t,
+                      onSelected: (sel) => setState(() => _fuelType = sel ? t : ''),
+                    ),
+                ],
               ),
             ],
           ),

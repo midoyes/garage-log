@@ -66,6 +66,15 @@ void main() {
       expect(stats['b']!.kmPerL, closeTo(20, 1e-9));
     });
 
+    test('同一天兩筆加滿：以里程排先後，與輸入順序無關', () {
+      final stats = computeFuelStats([
+        e('y', 2, 1, 1300, 15, 450),
+        e('x', 2, 1, 1000, 10, 300),
+      ]);
+      expect(stats.keys, ['y']);
+      expect(stats['y']!.distanceKm, 300);
+    });
+
     test('overallKmPerL 為總里程 / 總公升的加權平均', () {
       final stats = computeFuelStats([
         e('a', 1, 1, 1000, 10, 300),
@@ -124,6 +133,93 @@ void main() {
         ),
         isNull,
       );
+    });
+
+    group('同一天多筆', () {
+      final sameDay = [
+        e('p', 1, 31, 9800, 10, 300), // 前一天
+        e('m', 2, 1, 10000, 20, 600), // 同日上午
+        e('n', 2, 1, 10150, 20, 600), // 同日晚上
+      ];
+
+      test('編輯較早的一筆、保留原里程，不會被較晚的一筆擋下', () {
+        expect(
+          validateFuelOdometer(
+              existing: sameDay,
+              date: DateTime(2026, 2, 1),
+              odometer: 10000,
+              excludeId: 'm'),
+          isNull,
+        );
+      });
+
+      test('編輯較晚的一筆、保留原里程', () {
+        expect(
+          validateFuelOdometer(
+              existing: sameDay,
+              date: DateTime(2026, 2, 1),
+              odometer: 10150,
+              excludeId: 'n'),
+          isNull,
+        );
+      });
+
+      test('同日新增第三筆，里程介於兩筆之間', () {
+        expect(
+          validateFuelOdometer(
+              existing: sameDay, date: DateTime(2026, 2, 1), odometer: 10080),
+          isNull,
+        );
+      });
+
+      test('同日里程與另一筆完全相同會被擋下', () {
+        expect(
+          validateFuelOdometer(
+              existing: sameDay, date: DateTime(2026, 2, 1), odometer: 10150),
+          isNotNull,
+        );
+      });
+
+      test('同日編輯成小於前一天的里程仍會被擋下', () {
+        expect(
+          validateFuelOdometer(
+              existing: sameDay,
+              date: DateTime(2026, 2, 1),
+              odometer: 9700,
+              excludeId: 'm'),
+          isNotNull,
+        );
+      });
+
+      test('隔天有紀錄時，同日里程必須小於隔天的最小里程', () {
+        final withNext = [...sameDay, e('q', 2, 2, 10300, 20, 600)];
+        expect(
+          validateFuelOdometer(
+              existing: withNext,
+              date: DateTime(2026, 2, 1),
+              odometer: 10300,
+              excludeId: 'n'),
+          isNotNull,
+        );
+        expect(
+          validateFuelOdometer(
+              existing: withNext,
+              date: DateTime(2026, 2, 1),
+              odometer: 10299,
+              excludeId: 'n'),
+          isNull,
+        );
+      });
+    });
+
+    test('NaN / 無限大 / 負數里程被擋下', () {
+      for (final bad in [double.nan, double.infinity, -1.0]) {
+        expect(
+          validateFuelOdometer(
+              existing: existing, date: DateTime(2026, 3, 1), odometer: bad),
+          isNotNull,
+        );
+      }
     });
 
     test('沒有上一筆時不可小於初始里程', () {

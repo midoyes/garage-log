@@ -5,9 +5,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 
+import '../data/database.dart';
 import '../data/repository.dart';
 import '../domain/cost_summary.dart';
 import '../domain/fuel_calculator.dart';
+import '../domain/stats_summary.dart';
 import '../providers.dart';
 import 'common.dart';
 import 'format.dart';
@@ -20,38 +22,59 @@ class StatsPage extends ConsumerWidget {
     final vehicle = ref.watch(currentVehicleProvider);
     if (vehicle == null) return const NoVehicleHint();
 
-    final logs = ref.watch(fuelLogsProvider).valueOrNull ?? const [];
-    final maint = ref.watch(maintenanceProvider).valueOrNull ?? const [];
+    final period = ref.watch(statsPeriodProvider);
+    final logs = ref.watch(fuelLogsProvider).valueOrNull ?? const <FuelLog>[];
+    final maint =
+        ref.watch(maintenanceProvider).valueOrNull ?? const <MaintenanceWithItems>[];
 
-    final entries = logs.map(fuelLogToEntry).toList()
-      ..sort((a, b) => a.date.compareTo(b.date));
-    final stats = computeFuelStats(entries);
-    final points = [
-      for (final e in entries)
-        if (stats[e.id] != null) (date: e.date, kmPerL: stats[e.id]!.kmPerL),
+    final now = ref.watch(todayProvider);
+    final entries = logs.map(fuelLogToEntry).toList();
+    final allPoints = buildStatPoints(entries, computeFuelStats(entries));
+    final maintAmounts = [
+      for (final m in maint)
+        DatedAmount(DateTime.fromMillisecondsSinceEpoch(m.record.date), m.record.totalAmount),
+    ];
+    final fuelAmounts = [
+      for (final l in logs)
+        DatedAmount(DateTime.fromMillisecondsSinceEpoch(l.date), l.amount),
     ];
 
-    final months = computeMonthlyCosts(
-      fuel: [
-        for (final l in logs)
-          DatedAmount(DateTime.fromMillisecondsSinceEpoch(l.date), l.amount),
-      ],
-      maintenance: [
-        for (final m in maint)
-          DatedAmount(
-              DateTime.fromMillisecondsSinceEpoch(m.record.date), m.record.totalAmount),
-      ],
-    );
-    final recent = months.length > 12 ? months.sublist(months.length - 12) : months;
+    final range = periodRange(now, period);
+    final cur = summarizePeriod(points: allPoints, maintenance: maintAmounts, range: range);
+    final prev = period > 0
+        ? summarizePeriod(
+            points: allPoints,
+            maintenance: maintAmounts,
+            range: previousPeriodRange(now, period),
+          )
+        : null;
+
+    final points = allPoints.where((p) => range.contains(p.date)).toList();
+    final outliers = countOutliers(points.map((p) => p.kmPerL));
+
+    final allMonths = computeMonthlyCosts(fuel: fuelAmounts, maintenance: maintAmounts);
+    final from = range.from;
+    var months = from == null
+        ? allMonths
+        : allMonths
+            .where((m) => !m.month.isBefore(DateTime(from.year, from.month)))
+            .toList();
+    // 圖表最多畫 24 個月，避免十年資料擠在一張圖；摘要數字仍計算整個期間。
+    final monthsTruncated = months.length > 24;
+    if (monthsTruncated) months = months.sublist(months.length - 24);
 
     final fuelCard = _ChartCard(
       title: '歷次油耗 (km/L)',
+      footer: outliers > 0
+          ? '有 $outliers 筆油耗偏離中位數 40% 以上，可能是漏記加油或里程輸入錯誤，建議回頭檢查。'
+          : null,
       child: _FuelLineChart(points: points),
     );
     final costCard = _ChartCard(
       title: '每月花費（加油 vs 保養）',
       legend: const [('加油', 0), ('保養', 1)],
-      child: _MonthlyBarChart(months: recent),
+      footer: monthsTruncated ? '圖表只顯示最近 24 個有紀錄的月份；上方的摘要數字仍計算整個期間。' : null,
+      child: _MonthlyBarChart(months: months),
     );
 
     return LayoutBuilder(
@@ -60,6 +83,19 @@ class StatsPage extends ConsumerWidget {
         return ListView(
           padding: const EdgeInsets.all(16),
           children: [
+            SegmentedButton<int>(
+              segments: const [
+                ButtonSegment(value: 3, label: Text('近 3 個月')),
+                ButtonSegment(value: 12, label: Text('近 12 個月')),
+                ButtonSegment(value: 0, label: Text('全部')),
+              ],
+              selected: {period},
+              onSelectionChanged: (s) =>
+                  ref.read(statsPeriodProvider.notifier).state = s.first,
+            ),
+            const SizedBox(height: 12),
+            _SummaryTiles(cur: cur, prev: prev),
+            const SizedBox(height: 16),
             if (sideBySide)
               Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -81,11 +117,116 @@ class StatsPage extends ConsumerWidget {
   }
 }
 
+class _SummaryTiles extends StatelessWidget {
+  const _SummaryTiles({required this.cur, required this.prev});
+
+  final PeriodSummary cur;
+  final PeriodSummary? prev;
+
+  @override
+  Widget build(BuildContext context) {
+    final avg = cur.avgKmPerL;
+    final prevAvg = prev?.avgKmPerL;
+    String? delta;
+    IconData? deltaIcon;
+    if (avg != null && prevAvg != null) {
+      final d = avg - prevAvg;
+      delta = '比前一期 ${d >= 0 ? '+' : ''}${d.toStringAsFixed(2)} km/L';
+      deltaIcon = d >= 0 ? Icons.trending_up : Icons.trending_down;
+    }
+
+    final tiles = [
+      _Tile(
+        label: '平均油耗',
+        value: avg == null ? '—' : '${avg.toStringAsFixed(2)} km/L',
+        sub: delta ?? (cur.intervals == 0 ? '此期間沒有完整的跳停區間' : '${cur.intervals} 個跳停區間'),
+        icon: deltaIcon,
+      ),
+      _Tile(
+        label: '完整區間每公里油費',
+        value: cur.fuelCostPerKm == null ? '—' : '\$${cur.fuelCostPerKm!.toStringAsFixed(2)}',
+        sub: '${fmtKm(cur.distanceKm)} km 已完成跳停區間的加油花費',
+      ),
+      _Tile(
+        label: '估算每公里成本（區間油費＋保養）',
+        value: cur.allCostPerKm == null ? '—' : '\$${cur.allCostPerKm!.toStringAsFixed(2)}',
+        sub: '估算值：區間油費依區間結束日歸期，另加期間保養 \$${fmtMoney(cur.maintenanceAmount)}；'
+            '不等於該期間全部實際支出',
+      ),
+    ];
+
+    return LayoutBuilder(
+      builder: (context, c) {
+        final wide = c.maxWidth >= 640;
+        if (wide) {
+          return Row(
+            children: [
+              for (var i = 0; i < tiles.length; i++) ...[
+                if (i > 0) const SizedBox(width: 12),
+                Expanded(child: tiles[i]),
+              ],
+            ],
+          );
+        }
+        return Column(
+          children: [
+            for (var i = 0; i < tiles.length; i++) ...[
+              if (i > 0) const SizedBox(height: 8),
+              SizedBox(width: double.infinity, child: tiles[i]),
+            ],
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _Tile extends StatelessWidget {
+  const _Tile({required this.label, required this.value, required this.sub, this.icon});
+
+  final String label;
+  final String value;
+  final String sub;
+  final IconData? icon;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Card(
+      margin: EdgeInsets.zero,
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(label, style: theme.textTheme.bodySmall),
+            const SizedBox(height: 4),
+            Text(value, style: theme.textTheme.titleLarge),
+            const SizedBox(height: 4),
+            Row(
+              children: [
+                if (icon != null) ...[Icon(icon, size: 16), const SizedBox(width: 4)],
+                Expanded(child: Text(sub, style: theme.textTheme.bodySmall)),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _ChartCard extends StatelessWidget {
-  const _ChartCard({required this.title, required this.child, this.legend});
+  const _ChartCard({
+    required this.title,
+    required this.child,
+    this.legend,
+    this.footer,
+  });
 
   final String title;
   final Widget child;
+  final String? footer;
 
   /// (名稱, 顏色索引)：0 = primary, 1 = tertiary
   final List<(String, int)>? legend;
@@ -94,6 +235,7 @@ class _ChartCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     return Card(
+      margin: EdgeInsets.zero,
       child: Padding(
         padding: const EdgeInsets.fromLTRB(16, 16, 20, 16),
         child: Column(
@@ -119,6 +261,19 @@ class _ChartCard extends StatelessWidget {
             ),
             const SizedBox(height: 16),
             SizedBox(height: 260, child: child),
+            if (footer != null) ...[
+              const SizedBox(height: 12),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(Icons.info_outline, size: 16, color: cs.tertiary),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(footer!, style: Theme.of(context).textTheme.bodySmall),
+                  ),
+                ],
+              ),
+            ],
           ],
         ),
       ),
@@ -136,14 +291,14 @@ const _noTitles = AxisTitles(sideTitles: SideTitles(showTitles: false));
 class _FuelLineChart extends StatelessWidget {
   const _FuelLineChart({required this.points});
 
-  final List<({DateTime date, double kmPerL})> points;
+  final List<StatPoint> points;
 
   @override
   Widget build(BuildContext context) {
     if (points.isEmpty) {
       return const EmptyHint(
         icon: Icons.show_chart,
-        text: '需要至少兩筆「跳停」加油紀錄才有油耗資料',
+        text: '此期間沒有油耗資料\n（需要至少兩筆「跳停」加油紀錄）',
       );
     }
     final cs = Theme.of(context).colorScheme;
@@ -202,8 +357,9 @@ class _FuelLineChart extends StatelessWidget {
               for (var i = 0; i < points.length; i++)
                 FlSpot(i.toDouble(), points[i].kmPerL),
             ],
-            isCurved: true,
-            curveSmoothness: 0.2,
+            // 油耗是實際量測值：用直線連接，不用平滑曲線，
+            // 避免曲線看起來超出真實的最高 / 最低值。
+            isCurved: false,
             barWidth: 3,
             color: cs.primary,
             dotData: const FlDotData(show: true),
@@ -226,7 +382,7 @@ class _MonthlyBarChart extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (months.isEmpty) {
-      return const EmptyHint(icon: Icons.bar_chart, text: '還沒有花費資料');
+      return const EmptyHint(icon: Icons.bar_chart, text: '此期間沒有花費資料');
     }
     final cs = Theme.of(context).colorScheme;
     final maxV = months.map((m) => math.max(m.fuel, m.maintenance)).reduce(math.max);

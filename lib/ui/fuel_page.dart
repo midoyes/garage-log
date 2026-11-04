@@ -7,13 +7,42 @@ import '../domain/fuel_calculator.dart';
 import '../providers.dart';
 import 'common.dart';
 import 'format.dart';
-import 'fuel_form.dart';
+import 'navigation.dart';
 
-class FuelPage extends ConsumerWidget {
+class FuelPage extends ConsumerStatefulWidget {
   const FuelPage({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<FuelPage> createState() => _FuelPageState();
+}
+
+class _FuelPageState extends ConsumerState<FuelPage> {
+  int? _year;
+  String _query = '';
+
+  bool _match(FuelLog l, int? year) {
+    final date = DateTime.fromMillisecondsSinceEpoch(l.date);
+    if (year != null && date.year != year) return false;
+    final q = _query.trim().toLowerCase();
+    if (q.isEmpty) return true;
+    return l.note.toLowerCase().contains(q) ||
+        l.fuelType.toLowerCase().contains(q) ||
+        trimNum(l.odometer).contains(q) ||
+        fmtDate(date).contains(q);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // 換車時清掉年份與關鍵字，避免「篩選器顯示全部、列表卻是空的」
+    ref.listen<String?>(currentVehicleProvider.select((v) => v?.id), (prev, next) {
+      if (prev != next) {
+        setState(() {
+          _year = null;
+          _query = '';
+        });
+      }
+    });
+
     final vehicle = ref.watch(currentVehicleProvider);
     if (vehicle == null) return const NoVehicleHint();
 
@@ -27,28 +56,45 @@ class FuelPage extends ConsumerWidget {
                 text: '還沒有加油紀錄，點右下角新增',
               );
             }
-            final entries = logs.map(fuelLogToEntry).toList();
-            final stats = computeFuelStats(entries);
+            final stats = computeFuelStats(logs.map(fuelLogToEntry));
             final avg = overallKmPerL(stats.values);
             final totalFuelCost = logs.fold<double>(0, (s, l) => s + l.amount);
-            final shown = logs.reversed.toList(); // 新的在上
+            final years = {
+              for (final l in logs) DateTime.fromMillisecondsSinceEpoch(l.date).year,
+            }.toList()
+              ..sort((a, b) => b.compareTo(a));
+            // 選到的年份已不存在（例如刪光了該年紀錄）時，視同「全部年份」
+            final year = years.contains(_year) ? _year : null;
+            final shown =
+                logs.reversed.where((l) => _match(l, year)).toList(); // 新的在上
 
-            return ListView(
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 96),
+            return Column(
               children: [
-                _SummaryCard(
-                  avgKmPerL: avg,
-                  totalCost: totalFuelCost,
-                  count: logs.length,
+                FilterBar(
+                  key: ValueKey(vehicle.id),
+                  years: years,
+                  year: year,
+                  hint: '搜尋備註、里程、油品',
+                  onYearChanged: (y) => setState(() => _year = y),
+                  onQueryChanged: (q) => setState(() => _query = q),
                 ),
-                const SizedBox(height: 8),
-                for (final l in shown)
-                  _FuelCard(
-                    log: l,
-                    stat: stats[l.id],
-                    vehicle: vehicle,
-                    lastOdometer: logs.last.odometer,
+                Expanded(
+                  child: ListView.builder(
+                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 96),
+                    itemCount: shown.length + 1,
+                    itemBuilder: (context, i) {
+                      if (i == 0) {
+                        return _SummaryCard(
+                          avgKmPerL: avg,
+                          totalCost: totalFuelCost,
+                          count: logs.length,
+                        );
+                      }
+                      final l = shown[i - 1];
+                      return _FuelCard(log: l, stat: stats[l.id], vehicle: vehicle);
+                    },
                   ),
+                ),
               ],
             );
           },
@@ -93,67 +139,77 @@ class _SummaryCard extends StatelessWidget {
   }
 }
 
+/// 加油卡片：第一眼看到「日期、公升、金額」三個數字；
+/// 區間油耗用主色獨立一行，細節（里程、單價、備註）放次要位置。
 class _FuelCard extends ConsumerWidget {
-  const _FuelCard({
-    required this.log,
-    required this.stat,
-    required this.vehicle,
-    required this.lastOdometer,
-  });
+  const _FuelCard({required this.log, required this.stat, required this.vehicle});
 
   final FuelLog log;
   final FuelStat? stat;
   final Vehicle vehicle;
-  final double lastOdometer;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
     final date = DateTime.fromMillisecondsSinceEpoch(log.date);
+    final tags = [
+      if (log.fuelType.isNotEmpty) log.fuelType,
+      log.isFullTank ? '加滿' : '未加滿',
+    ].join(' · ');
 
     return Card(
       clipBehavior: Clip.antiAlias,
       child: InkWell(
-        onTap: () => Navigator.of(context).push(
-          MaterialPageRoute<void>(
-            builder: (_) => FuelFormPage(
-              vehicle: vehicle,
-              log: log,
-              lastOdometer: lastOdometer,
-            ),
-          ),
-        ),
+        onTap: () => openFuelForm(context, vehicle, log: log),
         child: Padding(
           padding: const EdgeInsets.fromLTRB(16, 12, 4, 12),
           child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    Text(fmtDate(date), style: theme.textTheme.titleSmall),
+                    Text(tags, style: theme.textTheme.bodySmall),
+                    const SizedBox(height: 8),
                     Row(
+                      crossAxisAlignment: CrossAxisAlignment.end,
                       children: [
-                        Text(fmtDate(date), style: theme.textTheme.titleMedium),
-                        const SizedBox(width: 8),
-                        if (!log.isFullTank)
-                          const Chip(
-                            label: Text('未加滿'),
-                            visualDensity: VisualDensity.compact,
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text('${trimNum(log.liters)} L',
+                                  style: theme.textTheme.headlineSmall),
+                              Text('${fmtKm(log.odometer)} km',
+                                  style: theme.textTheme.bodyMedium),
+                            ],
                           ),
+                        ),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text('\$${fmtMoney(log.amount)}',
+                                  style: theme.textTheme.headlineSmall),
+                              Text(
+                                log.unitPrice > 0
+                                    ? '\$${log.unitPrice.toStringAsFixed(2)} / L'
+                                    : '',
+                                style: theme.textTheme.bodyMedium,
+                              ),
+                            ],
+                          ),
+                        ),
                       ],
                     ),
-                    const SizedBox(height: 4),
-                    Text(
-                      '${fmtKm(log.odometer)} km · ${trimNum(log.liters)} L · '
-                      '\$${fmtMoney(log.amount)}'
-                      '${log.unitPrice > 0 ? '（\$${log.unitPrice.toStringAsFixed(2)}/L）' : ''}',
-                    ),
                     if (stat != null) ...[
-                      const SizedBox(height: 6),
+                      const SizedBox(height: 8),
                       Text(
-                        '${stat!.kmPerL.toStringAsFixed(2)} km/L · '
+                        '本次區間 ${stat!.kmPerL.toStringAsFixed(2)} km/L · '
                         '\$${stat!.costPerKm.toStringAsFixed(2)}/km · '
-                        '區間 ${fmtKm(stat!.distanceKm)} km',
+                        '${fmtKm(stat!.distanceKm)} km',
                         style: TextStyle(
                           color: theme.colorScheme.primary,
                           fontWeight: FontWeight.w600,

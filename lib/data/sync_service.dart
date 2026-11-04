@@ -36,18 +36,50 @@ class FolderSyncBackend implements SyncBackend {
 }
 
 /// 一次完整同步：下載遠端 → 合併進本機 → 把合併後結果寫回遠端。
+///
+/// 為降低「兩台裝置同時覆寫同一份同步檔」的風險，寫回前會再讀一次遠端：
+/// 如果合併期間遠端內容又變了，就重新合併一次再寫（最多重試 [maxAttempts] 次）。
+/// 重試次數用完仍持續變動時，**不會**強制覆寫，而是丟出 [SyncConflictException]，
+/// 請使用者稍後再試。
+///
+/// 這只能縮小競爭視窗，不是真正的鎖：比對之後、寫入之前仍可能有別台裝置寫入。
+/// 要做安全的全自動同步，後端必須提供版本驗證 / 條件式寫入（例如 ETag）。
+class SyncConflictException implements Exception {
+  const SyncConflictException();
+
+  @override
+  String toString() => '遠端資料持續變更，同步已取消，請稍後重試';
+}
+
 class SyncService {
-  SyncService(this.backup);
+  SyncService(this.backup, {this.maxAttempts = 3});
 
   final BackupService backup;
+  final int maxAttempts;
 
   Future<ImportReport> sync(SyncBackend backend) async {
-    var report = ImportReport();
-    final remote = await backend.read();
-    if (remote != null && remote.trim().isNotEmpty) {
-      report = await backup.importJson(remote);
+    final total = ImportReport();
+    String? seen;
+    for (var attempt = 0; attempt < maxAttempts; attempt++) {
+      final remote = await backend.read();
+      if (remote != null && remote.trim().isNotEmpty && remote != seen) {
+        final r = await backup.importJson(remote);
+        total
+          ..added += r.added
+          ..updated += r.updated
+          ..skipped += r.skipped
+          ..repaired += r.repaired;
+      }
+      seen = remote;
+
+      final content = await backup.exportJson();
+      final latest = await backend.read();
+      if (latest == remote) {
+        await backend.write(content);
+        return total;
+      }
+      // 遠端在我們合併期間被改過：重來一輪
     }
-    await backend.write(await backup.exportJson());
-    return report;
+    throw const SyncConflictException();
   }
 }

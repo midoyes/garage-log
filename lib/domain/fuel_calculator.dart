@@ -1,6 +1,8 @@
 /// 油耗計算（純 Dart，無 Flutter / Drift 依賴，方便單元測試）。
 library;
 
+import 'dart:math' as math;
+
 /// 計算用的加油紀錄（與資料庫 Row 解耦）。
 class FuelEntry {
   const FuelEntry({
@@ -54,7 +56,7 @@ int _compare(FuelEntry a, FuelEntry b) {
 /// 計算每一筆「加滿」紀錄的油耗，回傳 `id -> FuelStat`。
 ///
 /// 規則：
-/// 1. 依日期、里程排序。
+/// 1. 依日期、里程排序（同一天的多筆以里程排先後）。
 /// 2. 第一筆加滿僅作為起點（只記錄里程），不計算油耗；
 ///    它之前的未加滿紀錄也忽略（油箱起始狀態未知）。
 /// 3. 之後每一筆加滿：區間里程 = 本次里程 - 上次加滿里程。
@@ -109,10 +111,34 @@ String _km(double v) =>
 
 /// 里程防呆。回傳錯誤訊息；合法回傳 null。
 ///
-/// - 新增 / 編輯的里程必須大於「前一筆」（日期不晚於本筆者中最新的一筆）
-/// - 若插入在歷史中間，也必須小於「下一筆」（日期晚於本筆者中最早的一筆）
-/// - 沒有前一筆時不可小於車輛初始里程
-/// - 同一天多筆加油請依里程順序輸入
+/// 規則以「日」為單位，同一天內的多筆以里程自行排序，不互相卡住：
+/// - 里程必須大於「更早日期」所有紀錄的最大里程
+/// - 里程必須小於「更晚日期」所有紀錄的最小里程
+/// - 同一天內不可與其他紀錄里程完全相同
+/// - 沒有更早紀錄時，不可小於車輛初始里程
+/// - 編輯時以 [excludeId] 排除自己
+/// 某個日期的里程可填範圍：[prevMax] 是更早日期的最大里程（必須大於它），
+/// [nextMin] 是更晚日期的最小里程（必須小於它）。補登舊紀錄時用來提示正確範圍。
+({double? prevMax, double? nextMin}) fuelOdometerBounds({
+  required Iterable<FuelEntry> existing,
+  required DateTime date,
+  String? excludeId,
+}) {
+  final day = DateTime(date.year, date.month, date.day);
+  double? prevMax;
+  double? nextMin;
+  for (final e in existing) {
+    if (e.id == excludeId) continue;
+    final d = DateTime(e.date.year, e.date.month, e.date.day);
+    if (d.isBefore(day)) {
+      prevMax = prevMax == null ? e.odometer : math.max(prevMax, e.odometer);
+    } else if (d.isAfter(day)) {
+      nextMin = nextMin == null ? e.odometer : math.min(nextMin, e.odometer);
+    }
+  }
+  return (prevMax: prevMax, nextMin: nextMin);
+}
+
 String? validateFuelOdometer({
   required Iterable<FuelEntry> existing,
   required DateTime date,
@@ -120,31 +146,32 @@ String? validateFuelOdometer({
   double initialOdometer = 0,
   String? excludeId,
 }) {
-  if (odometer.isNaN || odometer < 0) return '里程必須為正數';
+  if (!odometer.isFinite || odometer < 0) return '里程必須為正數';
 
-  final others = existing.where((e) => e.id != excludeId).toList()
-    ..sort(_compare);
   final day = DateTime(date.year, date.month, date.day);
 
-  FuelEntry? prev;
-  FuelEntry? next;
-  for (final e in others) {
+  double? prevMax; // 更早日期的最大里程
+  double? nextMin; // 更晚日期的最小里程
+  for (final e in existing) {
+    if (e.id == excludeId) continue;
     final d = DateTime(e.date.year, e.date.month, e.date.day);
-    if (d.isAfter(day)) {
-      next ??= e;
-    } else {
-      prev = e;
+    if (d.isBefore(day)) {
+      prevMax = prevMax == null ? e.odometer : math.max(prevMax, e.odometer);
+    } else if (d.isAfter(day)) {
+      nextMin = nextMin == null ? e.odometer : math.min(nextMin, e.odometer);
+    } else if (e.odometer == odometer) {
+      return '同一天已有里程相同的紀錄（${_km(odometer)} km）';
     }
   }
 
-  if (prev == null && odometer < initialOdometer) {
+  if (prevMax == null && odometer < initialOdometer) {
     return '里程不可小於車輛初始里程（${_km(initialOdometer)} km）';
   }
-  if (prev != null && odometer <= prev.odometer) {
-    return '里程必須大於上一筆紀錄（${_km(prev.odometer)} km）';
+  if (prevMax != null && odometer <= prevMax) {
+    return '里程必須大於上一筆紀錄（${_km(prevMax)} km）';
   }
-  if (next != null && odometer >= next.odometer) {
-    return '里程必須小於下一筆紀錄（${_km(next.odometer)} km）';
+  if (nextMin != null && odometer >= nextMin) {
+    return '里程必須小於下一筆紀錄（${_km(nextMin)} km）';
   }
   return null;
 }
