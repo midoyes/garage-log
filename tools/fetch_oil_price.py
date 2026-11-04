@@ -43,6 +43,13 @@ def brief(body: bytes, n: int = 400) -> str:
     return re.sub(r"\s+", " ", t)[:n]
 
 
+def roc_date(v):
+    """中油的生效日是民國 7 碼（1151102 → 2026-11-02）；其他格式原樣回傳。"""
+    if v and re.fullmatch(r"\d{7}", v):
+        return f"{int(v[:3]) + 1911}-{v[3:5]}-{v[5:7]}"
+    return v
+
+
 def from_json(text: str):
     """容錯地從任意 JSON 結構找出油品與價格：
     任何 dict 中，有字串值含 98/95/92/柴油（產品名稱），且有名稱含「價」或 price 的數字欄位（20~60）。"""
@@ -55,7 +62,11 @@ def from_json(text: str):
     def walk(x):
         nonlocal effective
         if isinstance(x, dict):
-            name = next((v for v in x.values() if isinstance(v, str) and key_of(v)), None)
+            # 優先用「產品名稱」欄位（「型別名稱：汽柴油零售」也含「柴油」，不能拿它判斷）
+            name = x.get("產品名稱") if isinstance(x.get("產品名稱"), str) else None
+            if name is None:
+                name = next((v for k2, v in x.items()
+                             if isinstance(v, str) and "型別" not in k2 and key_of(v)), None)
             if name:
                 for kk, v in x.items():
                     if "價" in kk or "price" in kk.lower():
@@ -66,8 +77,8 @@ def from_json(text: str):
                         k = key_of(name)
                         if 20 <= val <= 60 and k and k not in prices:
                             prices[k] = val
-                            effective = effective or next(
-                                (str(v2) for k2, v2 in x.items() if "生效" in k2 or "date" in k2.lower()), None)
+                            effective = effective or roc_date(next(
+                                (str(v2) for k2, v2 in x.items() if "生效" in k2 or "date" in k2.lower()), None))
                             break
             for v in x.values():
                 walk(v)
@@ -80,19 +91,8 @@ def from_json(text: str):
 
 
 def candidate_urls():
-    """舊的 WebService + 官方 openData（由 swagger.json 找出名稱含 price 的 GET 路徑）。"""
-    urls = [URL]
-    try:
-        sw = get(OPENDATA_BASE + "/swagger/v1/swagger.json")
-        spec = json.loads(sw.decode("utf-8", errors="replace"))
-        paths = list(spec.get("paths", {}))
-        print("openData swagger 路徑：", paths)
-        for pth, ops in spec.get("paths", {}).items():
-            if "get" in ops and re.search(r"price|牌價|oil|fuel", pth, re.I):
-                urls.append(OPENDATA_BASE.rsplit("/openData", 1)[0] + pth if pth.startswith("/openData") else OPENDATA_BASE + pth)
-    except Exception as e:  # noqa: BLE001
-        print("取得 swagger 失敗：", e)
-    return urls
+    """官方 openData（JSON，實測可用）優先；舊 WebService 會被防火牆擋，只當備援。"""
+    return [OPENDATA_BASE + "/MainProdListPrice", URL]
 
 
 def fetch_all():

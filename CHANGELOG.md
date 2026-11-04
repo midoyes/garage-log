@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.7 — 油價改用中油官方 openData（實測可用）
+
+- 0.2.6 的日誌證實：舊 WebService 被防火牆擋（Request Rejected），但官方 `openData/MainProdListPrice`（JSON）可以正常取得。
+- 腳本與 App 都改用 `openData/MainProdListPrice`，不再試其他來源。
+- 修正解析：「型別名稱：汽柴油零售」含有「柴油」二字，原本會誤判成柴油；現在以「產品名稱」判斷。
+- 生效日由民國 7 碼（1151102）轉成 2026-11-02。
+
 ## 0.2.6 — 油價來源防火牆問題
 
 - 0.2.5 的 Actions 日誌顯示：中油網站回傳的是「Request Rejected」網頁（防火牆擋掉 GitHub 的機器），不是資料格式問題。

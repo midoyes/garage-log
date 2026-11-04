@@ -16,8 +16,8 @@ import 'package:xml/xml.dart';
 const kOilJsonUrl =
     'https://raw.githubusercontent.com/midoyes/garage-log/main/data/oil_price.json';
 
-const kCpcPriceUrl =
-    'https://vipmbr.cpc.com.tw/CPCSTN/ListPriceWebService.asmx/getCPCMainProdListPrice_Chinese';
+/// 中油官方開放資料（JSON）。舊的 ListPriceWebService 會被防火牆擋（Request Rejected）。
+const kCpcPriceUrl = 'https://vipmbr.cpc.com.tw/openData/MainProdListPrice';
 
 class FuelPrice {
   const FuelPrice(this.name, this.price);
@@ -148,6 +148,8 @@ FuelPriceSnapshot? parseOilJson(String body, {DateTime? now}) {
 /// 預期每個 `<tbTable>` 節點含「產品名稱」「參考牌價_金額」，
 /// 可能有「牌價生效時間」。只保留汽油 92/95/98 與柴油。
 FuelPriceSnapshot? parseCpcPrices(String body, {DateTime? now}) {
+  final t = body.trimLeft();
+  if (t.startsWith('[') || t.startsWith('{')) return _parseCpcJson(t, now: now);
   final XmlDocument doc;
   try {
     doc = XmlDocument.parse(body);
@@ -184,6 +186,45 @@ FuelPriceSnapshot? parseCpcPrices(String body, {DateTime? now}) {
   prices.sort((a, b) => _rank(a.name).compareTo(_rank(b.name)));
   return FuelPriceSnapshot(
       prices: prices, fetchedAt: now ?? DateTime.now(), effective: effective);
+}
+
+/// 中油 openData JSON：每列有「產品名稱」「參考牌價_金額」「牌價生效日期（民國 7 碼）」。
+FuelPriceSnapshot? _parseCpcJson(String body, {DateTime? now}) {
+  try {
+    final j = jsonDecode(body);
+    if (j is! List) return null;
+    final prices = <FuelPrice>[];
+    final seen = <int>{};
+    String? effective;
+    for (final r in j) {
+      if (r is! Map) continue;
+      final name = r['產品名稱'];
+      final raw = r['參考牌價_金額'];
+      if (name is! String || raw is! num) continue;
+      final price = raw.toDouble();
+      if (price < 20 || price > 60) continue; // 排除用「元/公秉」等其他單位的油品
+      if (!(name.contains('98') ||
+          name.contains('95') ||
+          name.contains('92') ||
+          name.contains('柴油'))) {
+        continue;
+      }
+      if (!seen.add(_rank(name))) continue;
+      prices.add(FuelPrice(name, price));
+      final d = r['牌價生效日期']?.toString();
+      if (effective == null && d != null) {
+        effective = RegExp(r'^\d{7}$').hasMatch(d)
+            ? '${int.parse(d.substring(0, 3)) + 1911}-${d.substring(3, 5)}-${d.substring(5, 7)}'
+            : d;
+      }
+    }
+    if (prices.isEmpty) return null;
+    prices.sort((a, b) => _rank(a.name).compareTo(_rank(b.name)));
+    return FuelPriceSnapshot(
+        prices: prices, fetchedAt: now ?? DateTime.now(), effective: effective);
+  } catch (_) {
+    return null;
+  }
 }
 
 FuelPriceSnapshot? _parseCpcLoose(String body, {DateTime? now}) {
