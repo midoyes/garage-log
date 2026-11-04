@@ -19,11 +19,14 @@ jobs:
       - uses: actions/checkout@v4
       - name: Fetch CPC prices
         run: python3 tools/fetch_oil_price.py
+      - name: Collect market data & trend (experimental)
+        continue-on-error: true
+        run: python3 tools/collect_market.py
       - name: Commit if changed
         run: |
           git config user.name "oil-price-bot"
           git config user.email "oil-price-bot@users.noreply.github.com"
-          git add data/oil_price.json
+          git add data/
           if git diff --cached --quiet; then echo "no change"; else
             git commit -m "chore: update oil price"
             git push
