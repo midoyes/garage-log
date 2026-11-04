@@ -28,6 +28,8 @@
 
 - CI `flutter analyze` 的 3 個問題：設定頁 `const` 誤用、測試檔 `isNotNull` 名稱衝突（drift 與 flutter_test）、
   `didChangeAppLifecycleState` 參數名稱。
+- CI 的 Windows 建置：套用圖示的腳本在 Windows 上印中文會因編碼錯誤失敗，改為強制 UTF-8 輸出。
+- CI 的簽章指紋擷取：`apksigner` 實際輸出是 `V2 Signer: certificate SHA-256 digest`，原本的比對文字對不上，已修正。
 
 ### 測試（新增）
 異常保養單不進列表與統計、負單價 / 數量 0 / 空白名稱 / 空白車輛名稱被拒絕、墓碑寬鬆處理、完整復原影響預估。

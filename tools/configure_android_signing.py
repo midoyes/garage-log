@@ -19,6 +19,10 @@ import os
 import sys
 from pathlib import Path
 
+# Windows runner 的 Python 預設用 cp1252 輸出，印中文會丟 UnicodeEncodeError 讓 CI 失敗
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 ANDROID = Path("android")
 APP = ANDROID / "app"
 
