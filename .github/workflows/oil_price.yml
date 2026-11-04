@@ -1,0 +1,30 @@
+name: oil-price
+
+# 定時抓中油公開牌價 → data/oil_price.json（App 讀取）
+on:
+  schedule:
+    - cron: "5 4 * * 0"     # 週日 12:05（台灣）公告後第一次
+    - cron: "35 4 * * 0"    # 週日 12:35 補抓
+    - cron: "5 6 * * 6,0,1" # 週六、日、一 14:05
+    - cron: "5 0 * * *"     # 每天 08:05 保底
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch CPC prices
+        run: python3 tools/fetch_oil_price.py
+      - name: Commit if changed
+        run: |
+          git config user.name "oil-price-bot"
+          git config user.email "oil-price-bot@users.noreply.github.com"
+          git add data/oil_price.json
+          if git diff --cached --quiet; then echo "no change"; else
+            git commit -m "chore: update oil price"
+            git push
+          fi
