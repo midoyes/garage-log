@@ -464,6 +464,10 @@ class _FuelPriceCard extends ConsumerWidget {
                             style: theme.textTheme.titleLarge?.copyWith(
                                 color: colors[i % colors.length],
                                 fontWeight: FontWeight.bold)),
+                        if (snap.deltas[snap.prices[i].name] case final d?
+                            when d != 0)
+                          Text('${d > 0 ? '▲' : '▼'}${d.abs().toStringAsFixed(1)}',
+                              style: theme.textTheme.bodySmall),
                       ],
                     ),
                   ),

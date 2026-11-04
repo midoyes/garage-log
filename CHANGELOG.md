@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.2.4 — 油價改由 GitHub 定時產生的 JSON 提供
+
+### 新增
+- **`.github/workflows/oil_price.yml` + `tools/fetch_oil_price.py`**：GitHub Actions 在週日 12:05 / 12:35、週六日一下午與每天早上，
+  抓中油公開牌價，寫成 `data/oil_price.json`（含目前牌價、上一次牌價、近一年歷史）。有變動才 commit。
+  抓不到或解析不出至少 3 種油品時會讓 Actions 變紅燈，且不覆蓋舊檔。
+- **App 優先讀這個 JSON**，失敗再直接問中油，再失敗顯示上次快取。中油網站改版時只需改腳本，不必重發 APK / EXE。
+- **首頁油價卡顯示較上次調整**（▲0.5 / ▼0.3）。
+- **預測欄位 `prediction` 目前是空的**：公式與平穩機制先用歷史資料回測、確認準確再加入，不會顯示未驗證的預測。
+
+### 使用前置
+- JSON 網址是 `raw.githubusercontent.com/midoyes/garage-log/main/data/oil_price.json`，**倉庫必須是公開的**（或改放公開的 GitHub Pages）。
+- 第一次請到 Actions → oil-price → Run workflow 手動執行一次，確認日誌顯示 `OK {...}` 並產生 `data/oil_price.json`。
+
 ## 0.2.3 — 里程依日期判定、單價兩位小數、今日油價
 
 資料庫結構**沒有變動**（仍是 schema v2）。新增依賴 `xml`（解析油價）。

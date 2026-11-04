@@ -29,4 +29,18 @@ void main() {
     final back = FuelPriceSnapshot.fromJson(s.toJson())!;
     expect(back.prices.length, 4);
   });
+
+  test('oil_price.json：解析牌價與較上次差額', () {
+    const j = '{"schema":1,"current":{"effective":"2026-11-02","prices":{"98":34.7,"95":32.7,"92":31.2,"diesel":29.9}},'
+        '"previous":{"effective":"2026-10-26","prices":{"98":34.2,"95":32.2,"92":31.2,"diesel":30.4}}}';
+    final s = parseOilJson(j)!;
+    expect(s.prices.map((p) => p.name), ['98無鉛', '95無鉛', '92無鉛', '柴油']);
+    expect(s.deltas['98無鉛'], 0.5);
+    expect(s.deltas['柴油'], -0.5);
+    expect(s.effective, '2026-11-02');
+  });
+  test('oil_price.json：schema 不符或壞資料 → null', () {
+    expect(parseOilJson('{"schema":2}'), isNull);
+    expect(parseOilJson('oops'), isNull);
+  });
 }

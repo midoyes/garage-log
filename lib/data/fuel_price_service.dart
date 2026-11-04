@@ -11,6 +11,11 @@ import 'dart:io';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:xml/xml.dart';
 
+/// 由 GitHub Actions 定時產生的 JSON（見 tools/fetch_oil_price.py）。
+/// 倉庫需為公開，或改放到公開的 GitHub Pages。
+const kOilJsonUrl =
+    'https://raw.githubusercontent.com/midoyes/garage-log/main/data/oil_price.json';
+
 const kCpcPriceUrl =
     'https://vipmbr.cpc.com.tw/CPCSTN/ListPriceWebService.asmx/getCPCMainProdListPrice_Chinese';
 
@@ -35,7 +40,11 @@ class FuelPriceSnapshot {
     required this.fetchedAt,
     this.effective,
     this.fromCache = false,
+    this.deltas = const {},
   });
+
+  /// 與上一次不同牌價相比的差額（油品名稱 → 元/公升），沒有上一次就是空的
+  final Map<String, double> deltas;
 
   final List<FuelPrice> prices;
   final DateTime fetchedAt;
@@ -47,12 +56,17 @@ class FuelPriceSnapshot {
   final bool fromCache;
 
   FuelPriceSnapshot asCache() => FuelPriceSnapshot(
-      prices: prices, fetchedAt: fetchedAt, effective: effective, fromCache: true);
+      prices: prices,
+      fetchedAt: fetchedAt,
+      effective: effective,
+      fromCache: true,
+      deltas: deltas);
 
   Map<String, dynamic> toJson() => {
         'prices': [for (final p in prices) p.toJson()],
         'fetchedAt': fetchedAt.millisecondsSinceEpoch,
         'effective': effective,
+        'deltas': deltas,
       };
 
   static FuelPriceSnapshot? fromJson(Object? j) {
@@ -70,7 +84,62 @@ class FuelPriceSnapshot {
       prices: prices,
       fetchedAt: DateTime.fromMillisecondsSinceEpoch(at),
       effective: j['effective'] as String?,
+      deltas: {
+        if (j['deltas'] is Map)
+          for (final e in (j['deltas'] as Map).entries)
+            if (e.key is String && e.value is num)
+              e.key as String: (e.value as num).toDouble(),
+      },
     );
+  }
+}
+
+const _jsonNames = {
+  '98': '98無鉛',
+  '95': '95無鉛',
+  '92': '92無鉛',
+  'diesel': '柴油',
+};
+
+/// 解析 oil_price.json（schema 1）。格式不符回傳 null。
+FuelPriceSnapshot? parseOilJson(String body, {DateTime? now}) {
+  try {
+    final j = jsonDecode(body);
+    if (j is! Map || j['schema'] != 1) return null;
+    final cur = j['current'];
+    if (cur is! Map || cur['prices'] is! Map) return null;
+    final curPrices = <String, double>{
+      for (final e in (cur['prices'] as Map).entries)
+        if (e.key is String && e.value is num && (e.value as num) > 0)
+          e.key as String: (e.value as num).toDouble(),
+    };
+    final prev = j['previous'];
+    final prevPrices = (prev is Map && prev['prices'] is Map)
+        ? <String, double>{
+            for (final e in (prev['prices'] as Map).entries)
+              if (e.key is String && e.value is num)
+                e.key as String: (e.value as num).toDouble(),
+          }
+        : <String, double>{};
+    final prices = <FuelPrice>[];
+    final deltas = <String, double>{};
+    for (final k in ['98', '95', '92', 'diesel']) {
+      final v = curPrices[k];
+      if (v == null) continue;
+      final name = _jsonNames[k]!;
+      prices.add(FuelPrice(name, v));
+      final p = prevPrices[k];
+      if (p != null) deltas[name] = double.parse((v - p).toStringAsFixed(2));
+    }
+    if (prices.isEmpty) return null;
+    return FuelPriceSnapshot(
+      prices: prices,
+      fetchedAt: now ?? DateTime.now(),
+      effective: cur['effective'] as String?,
+      deltas: deltas,
+    );
+  } catch (_) {
+    return null;
   }
 }
 
@@ -138,19 +207,26 @@ class FuelPriceService {
     }
   }
 
-  /// 抓最新牌價；失敗時回傳上次快取（標記 fromCache），都沒有就回 null。
+  Future<String> _get(HttpClient client, String url) async {
+    final req = await client.getUrl(Uri.parse(url));
+    final res = await req.close().timeout(const Duration(seconds: 12));
+    if (res.statusCode != 200) throw HttpException('HTTP ${res.statusCode}');
+    return res.transform(utf8.decoder).join().timeout(const Duration(seconds: 12));
+  }
+
+  /// 抓最新牌價：先讀專案的 oil_price.json，失敗再直接問中油；
+  /// 都失敗回傳上次快取（標記 fromCache），都沒有就回 null。
   Future<FuelPriceSnapshot?> fetch() async {
     final client = HttpClient()..connectionTimeout = const Duration(seconds: 8);
     try {
-      final req = await client.getUrl(Uri.parse(kCpcPriceUrl));
-      final res = await req.close().timeout(const Duration(seconds: 12));
-      if (res.statusCode != 200) throw HttpException('HTTP ${res.statusCode}');
-      final body = await res
-          .transform(utf8.decoder)
-          .join()
-          .timeout(const Duration(seconds: 12));
-      final snap = parseCpcPrices(body);
-      if (snap == null) throw const FormatException('無法解析油價資料');
+      FuelPriceSnapshot? snap;
+      try {
+        snap = parseOilJson(await _get(client, kOilJsonUrl));
+      } catch (_) {}
+      if (snap == null) {
+        snap = parseCpcPrices(await _get(client, kCpcPriceUrl));
+        if (snap == null) throw const FormatException('無法解析油價資料');
+      }
       try {
         final prefs = await SharedPreferences.getInstance();
         await prefs.setString(_cacheKey, jsonEncode(snap.toJson()));
