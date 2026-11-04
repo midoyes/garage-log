@@ -238,6 +238,8 @@ class FuelPriceService {
   }
 
   Future<String> _get(HttpClient client, String url) async {
+    client.userAgent =
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36';
     final req = await client.getUrl(Uri.parse(url));
     final res = await req.close().timeout(const Duration(seconds: 12));
     if (res.statusCode != 200) throw HttpException('HTTP ${res.statusCode}');

@@ -22,10 +22,95 @@ TPE = timezone(timedelta(hours=8))
 KEEP = 52  # 保留一年的週歷史
 
 
-def fetch() -> bytes:
-    req = urllib.request.Request(URL, headers={"User-Agent": "garage-log-oil-price/1.0"})
+BROWSER_HEADERS = {
+    "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                   "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"),
+    "Accept": "application/json, text/xml, application/xml, text/plain, */*",
+    "Accept-Language": "zh-TW,zh;q=0.9,en;q=0.8",
+}
+OPENDATA_BASE = "https://vipmbr.cpc.com.tw/openData"
+
+
+def get(url: str) -> bytes:
+    req = urllib.request.Request(url, headers=BROWSER_HEADERS)
     with urllib.request.urlopen(req, timeout=30) as r:
         return r.read()
+
+
+def brief(body: bytes, n: int = 400) -> str:
+    """日誌用的摘要：去掉 base64 圖片、壓成一行。"""
+    t = re.sub(r"data:[a-z/]+;base64,[A-Za-z0-9+/=]+", "data:...", body.decode("utf-8", errors="replace"))
+    return re.sub(r"\s+", " ", t)[:n]
+
+
+def from_json(text: str):
+    """容錯地從任意 JSON 結構找出油品與價格：
+    任何 dict 中，有字串值含 98/95/92/柴油（產品名稱），且有名稱含「價」或 price 的數字欄位（20~60）。"""
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return {}, None
+    prices, effective = {}, None
+
+    def walk(x):
+        nonlocal effective
+        if isinstance(x, dict):
+            name = next((v for v in x.values() if isinstance(v, str) and key_of(v)), None)
+            if name:
+                for kk, v in x.items():
+                    if "價" in kk or "price" in kk.lower():
+                        try:
+                            val = float(v)
+                        except (TypeError, ValueError):
+                            continue
+                        k = key_of(name)
+                        if 20 <= val <= 60 and k and k not in prices:
+                            prices[k] = val
+                            effective = effective or next(
+                                (str(v2) for k2, v2 in x.items() if "生效" in k2 or "date" in k2.lower()), None)
+                            break
+            for v in x.values():
+                walk(v)
+        elif isinstance(x, list):
+            for v in x:
+                walk(v)
+
+    walk(data)
+    return prices, effective
+
+
+def candidate_urls():
+    """舊的 WebService + 官方 openData（由 swagger.json 找出名稱含 price 的 GET 路徑）。"""
+    urls = [URL]
+    try:
+        sw = get(OPENDATA_BASE + "/swagger/v1/swagger.json")
+        spec = json.loads(sw.decode("utf-8", errors="replace"))
+        paths = list(spec.get("paths", {}))
+        print("openData swagger 路徑：", paths)
+        for pth, ops in spec.get("paths", {}).items():
+            if "get" in ops and re.search(r"price|牌價|oil|fuel", pth, re.I):
+                urls.append(OPENDATA_BASE.rsplit("/openData", 1)[0] + pth if pth.startswith("/openData") else OPENDATA_BASE + pth)
+    except Exception as e:  # noqa: BLE001
+        print("取得 swagger 失敗：", e)
+    return urls
+
+
+def fetch_all():
+    """逐一嘗試來源，回傳 (prices, effective)；每個來源都在日誌留下狀態與摘要。"""
+    for u in candidate_urls():
+        try:
+            body = get(u)
+        except Exception as e:  # noqa: BLE001
+            print(f"[失敗] {u} → {e}")
+            continue
+        print(f"[回應] {u} → {len(body)} bytes：{brief(body)}")
+        prices, eff = parse(body)
+        if len(prices) < 3:
+            prices, eff = from_json(body.decode("utf-8", errors="replace"))
+        if len(prices) >= 3:
+            print(f"[採用] {u}")
+            return prices, eff
+    return {}, None
 
 
 def key_of(name: str):
@@ -67,14 +152,9 @@ def parse(body: bytes):
 
 
 def main() -> None:
-    body = fetch()
-    # 永遠印出開頭，方便從 Actions 日誌確認來源實際格式
-    print("來源回傳前 1500 字：")
-    print(body[:1500].decode("utf-8", errors="replace"))
-    prices, effective = parse(body)
+    prices, effective = fetch_all()
     if len(prices) < 3:
-        print(f"::error::只解析到 {len(prices)} 種油品，來源格式可能改了。原始內容前 800 字：")
-        print(body[:800].decode("utf-8", errors="replace"))
+        print(f"::error::所有來源都沒有解析出油價（只有 {len(prices)} 種）。請把上面的 [回應]/[失敗] 日誌貼給作者。")
         sys.exit(1)
 
     now = datetime.now(TPE)

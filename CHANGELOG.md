@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.6 — 油價來源防火牆問題
+
+- 0.2.5 的 Actions 日誌顯示：中油網站回傳的是「Request Rejected」網頁（防火牆擋掉 GitHub 的機器），不是資料格式問題。
+- `tools/fetch_oil_price.py` 改成：使用瀏覽器標頭；依序嘗試舊的 WebService 與中油官方 openData 介面
+  （由其 `swagger.json` 找出牌價路徑）；支援 XML 與 JSON；每個來源的狀態與回應摘要都印在日誌。
+- App 連網時也改用瀏覽器 User-Agent。
+- 若所有來源仍被擋，Actions 會紅燈並提示貼日誌；那時需要改用其他資料來源（見 README）。
+
 ## 0.2.5 — 修正油價抓取
 
 - 第一次執行 oil-price 工作流程時，中油有回應，但回傳的 XML 標籤不成對（`mismatched tag`），XML 解析器直接失敗。

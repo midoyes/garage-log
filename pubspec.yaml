@@ -1,7 +1,7 @@
 name: garage_log
 description: 純本地、無廣告、輕量化的汽機車油耗與保養記錄 App（Android / Windows）。
 publish_to: 'none'
-version: 0.2.5+7
+version: 0.2.6+8
 
 environment:
   sdk: ^3.5.0
