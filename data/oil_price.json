@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "updated_at": "2026-11-04",
+  "source": "台灣中油 ListPriceWebService",
+  "current": {
+    "effective": "2026-11-02",
+    "prices": {
+      "98": 34.7,
+      "95": 32.7,
+      "92": 31.2,
+      "diesel": 29.9
+    }
+  },
+  "previous": null,
+  "history": [
+    {
+      "effective": "2026-11-02",
+      "prices": {
+        "98": 34.7,
+        "95": 32.7,
+        "92": 31.2,
+        "diesel": 29.9
+      }
+    }
+  ],
+  "prediction": null
+}
