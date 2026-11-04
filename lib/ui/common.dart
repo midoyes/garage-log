@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'navigation.dart';
 
-const kAppVersion = '0.2.7';
+const kAppVersion = '0.3.0';
 
 /// 油品選項。
 const kFuelTypes = <String>['92', '95', '98', '柴油', '其他'];

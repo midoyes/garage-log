@@ -173,7 +173,7 @@ def main() -> None:
         "current": history[-1],
         "previous": previous,
         "history": history,
-        "prediction": None,  # 尚未提供；驗證公式後才會加入
+        "prediction": old.get("prediction"),  # 由 collect_market.py 寫入（實驗性）
     }
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

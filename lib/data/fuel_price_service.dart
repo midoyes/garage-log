@@ -34,6 +34,20 @@ class FuelPrice {
   }
 }
 
+/// 下週趨勢（實驗性）：只有方向與國際油價指標變動，不含價格，也不含中油政策吸收。
+class FuelForecast {
+  const FuelForecast({
+    required this.trend,
+    required this.pct,
+    required this.weekStart,
+    required this.daysKnown,
+  });
+  final String trend; // up / down / flat
+  final double pct;
+  final String weekStart; // 預測適用的週一
+  final int daysKnown;
+}
+
 class FuelPriceSnapshot {
   const FuelPriceSnapshot({
     required this.prices,
@@ -41,7 +55,11 @@ class FuelPriceSnapshot {
     this.effective,
     this.fromCache = false,
     this.deltas = const {},
+    this.forecast,
   });
+
+  /// 下週趨勢（實驗）。已有官方公告（生效日 ≥ 預測週）時為 null。
+  final FuelForecast? forecast;
 
   /// 與上一次不同牌價相比的差額（油品名稱 → 元/公升），沒有上一次就是空的
   final Map<String, double> deltas;
@@ -60,7 +78,8 @@ class FuelPriceSnapshot {
       fetchedAt: fetchedAt,
       effective: effective,
       fromCache: true,
-      deltas: deltas);
+      deltas: deltas,
+      forecast: forecast);
 
   Map<String, dynamic> toJson() => {
         'prices': [for (final p in prices) p.toJson()],
@@ -101,6 +120,23 @@ const _jsonNames = {
   'diesel': '柴油',
 };
 
+FuelForecast? _parseForecast(Object? p, String? effective) {
+  if (p is! Map) return null;
+  final trend = p['trend'];
+  final pct = p['index_change_pct'];
+  final ws = p['week_start'];
+  if (trend is! String || pct is! num || ws is! String) return null;
+  if (!const {'up', 'down', 'flat'}.contains(trend)) return null;
+  // 中油已公告該週（或更新）的牌價 → 以官方為準，不再顯示預測
+  if (effective != null && effective.compareTo(ws) >= 0) return null;
+  return FuelForecast(
+    trend: trend,
+    pct: pct.toDouble(),
+    weekStart: ws,
+    daysKnown: (p['days_known'] is int) ? p['days_known'] as int : 0,
+  );
+}
+
 /// 解析 oil_price.json（schema 1）。格式不符回傳 null。
 FuelPriceSnapshot? parseOilJson(String body, {DateTime? now}) {
   try {
@@ -137,6 +173,7 @@ FuelPriceSnapshot? parseOilJson(String body, {DateTime? now}) {
       fetchedAt: now ?? DateTime.now(),
       effective: cur['effective'] as String?,
       deltas: deltas,
+      forecast: _parseForecast(j['prediction'], cur['effective'] as String?),
     );
   } catch (_) {
     return null;

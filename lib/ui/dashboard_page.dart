@@ -473,6 +473,35 @@ class _FuelPriceCard extends ConsumerWidget {
                   ),
               ],
             ),
+            if (snap.forecast case final f?) ...[
+              const SizedBox(height: 10),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.surfaceContainerHighest,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '下週趨勢（實驗）：'
+                      '${f.trend == 'up' ? '▲ 偏漲' : f.trend == 'down' ? '▼ 偏跌' : '— 持平'}'
+                      '（國際油價指標 ${f.pct >= 0 ? '+' : ''}${f.pct.toStringAsFixed(1)}%）',
+                      style: theme.textTheme.bodyMedium
+                          ?.copyWith(fontWeight: FontWeight.w600),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      '${f.weekStart} 起適用，本週資料已知 ${f.daysKnown}/5 天。'
+                      '估算非官方，未計中油平穩與吸收措施，實際牌價可能不調整；公告後以官方為準。',
+                      style: theme.textTheme.bodySmall,
+                    ),
+                  ],
+                ),
+              ),
+            ],
             const SizedBox(height: 8),
             Text(info.toString(), style: theme.textTheme.bodySmall),
           ],

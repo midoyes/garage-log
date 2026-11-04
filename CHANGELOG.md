@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.0 — 下週油價趨勢（實驗）與資料蒐集
+
+- **`tools/collect_market.py`**：每天蒐集布蘭特原油（Yahoo Finance）與美元兌新臺幣匯率（央行開放資料，備援 Yahoo），
+  存入 `data/market_history.json`；比較「本週與前週的 原油×匯率 週平均」，把趨勢寫進 `oil_price.json` 的 `prediction`。
+  每天的預測快照存到 `data/prediction_log.json`，累積幾週後用來回測，並和「沿用本週牌價」比較。
+- **首頁油價卡新增「下週趨勢（實驗）」**：只顯示偏漲 / 偏跌 / 持平與國際油價指標變動百分比，**不顯示預測價格**。
+  中油公告該週牌價後自動隱藏，改以官方為準。
+- **刻意的限制**：杜拜原油沒有免費可靠來源，改用布蘭特替代（幅度不準）；中油的平穩與吸收措施無法由公式推得，實際牌價可能不調整，畫面已註明。
+- 資料蒐集失敗不會影響牌價更新（`continue-on-error`）。央行匯率介面的格式尚未實測，第一次執行請看 Actions 日誌。
+
 ## 0.2.7 — 油價改用中油官方 openData（實測可用）
 
 - 0.2.6 的日誌證實：舊 WebService 被防火牆擋（Request Rejected），但官方 `openData/MainProdListPrice`（JSON）可以正常取得。

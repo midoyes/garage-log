@@ -297,7 +297,9 @@ GitHub Actions（tools/fetch_oil_price.py，定時）
 
 - 手動執行：Actions → oil-price → Run workflow。日誌會印出解析到的價格。
 - 公開倉庫若 60 天沒有任何活動，GitHub 會停用排程工作流程，需要到 Actions 頁面重新啟用。
-- 「下週預測」尚未提供，`prediction` 欄位保留為 null。
+- **下週趨勢（實驗）**：`tools/collect_market.py` 每天蒐集布蘭特與匯率，比較本週與前週的「原油 × 匯率」週平均，
+  只輸出偏漲 / 偏跌 / 持平與百分比，**不輸出預測價格**。杜拜原油無免費來源，以布蘭特替代；中油的平穩與吸收措施無法由公式推得，
+  所以實際牌價可能不調整。每日快照存在 `data/prediction_log.json`，累積後回測，確認比「沿用本週牌價」準再決定是否升級成價格預測。
 
 ## 已知限制與刻意延後的項目
 

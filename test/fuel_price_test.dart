@@ -55,6 +55,14 @@ void main() {
     expect(s.deltas['柴油'], -0.5);
     expect(s.effective, '2026-11-02');
   });
+  test('oil_price.json：趨勢預測；官方已公告該週後隱藏', () {
+    String j(String eff) => '{"schema":1,"current":{"effective":"$eff","prices":{"95":32.7}},'
+        '"prediction":{"trend":"up","index_change_pct":1.2,"week_start":"2026-11-09","days_known":3}}';
+    final s = parseOilJson(j('2026-11-02'))!;
+    expect(s.forecast!.trend, 'up');
+    expect(s.forecast!.daysKnown, 3);
+    expect(parseOilJson(j('2026-11-09'))!.forecast, isNull);
+  });
   test('oil_price.json：schema 不符或壞資料 → null', () {
     expect(parseOilJson('{"schema":2}'), isNull);
     expect(parseOilJson('oops'), isNull);
