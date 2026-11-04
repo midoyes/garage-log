@@ -1,0 +1,25 @@
+# Flutter / Dart
+.dart_tool/
+.packages
+.pub-cache/
+.pub/
+build/
+.flutter-plugins
+.flutter-plugins-dependencies
+
+# drift / build_runner 產生檔（由 build_runner 產生，不進版控）
+*.g.dart
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# Android 簽章（切勿上傳）
+android/key.properties
+*.jks
+*.keystore
+
+# OS
+.DS_Store
+Thumbs.db
