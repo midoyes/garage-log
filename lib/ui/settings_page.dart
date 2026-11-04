@@ -232,10 +232,10 @@ class SettingsScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('設定')),
-      body: const Center(
+      body: Center(
         child: ConstrainedBox(
-          constraints: BoxConstraints(maxWidth: 800),
-          child: SettingsPage(),
+          constraints: const BoxConstraints(maxWidth: 800),
+          child: const SettingsPage(),
         ),
       ),
     );

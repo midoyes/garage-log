@@ -151,8 +151,8 @@ class TodayNotifier extends StateNotifier<DateTime> with WidgetsBindingObserver 
   }
 
   @override
-  void didChangeAppLifecycleState(AppLifecycleState lifecycle) {
-    if (lifecycle == AppLifecycleState.resumed) {
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
       refresh();
       _schedule();
     }
