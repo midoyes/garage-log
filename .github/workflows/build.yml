@@ -7,6 +7,12 @@ on:
   pull_request:
   workflow_dispatch:
 
+env:
+  # App 的唯一識別碼 = ORG + '.' + 專案名稱 → io.github.midoyes.garage_log
+  # 第一次公開發行後絕對不要再改，否則 Android 不會把新版當成舊版的更新。
+  APP_ORG: io.github.midoyes
+  APP_ID: io.github.midoyes.garage_log
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -17,9 +23,15 @@ jobs:
           channel: stable
           cache: true
       - run: flutter pub get
-      - run: dart run build_runner build --delete-conflicting-outputs
-      - run: flutter analyze
+      - run: dart run build_runner build
+      # info 等級的 lint 不擋 CI；error 與 warning 仍會失敗
+      - run: flutter analyze --no-fatal-infos
       - run: flutter test
+      # 取得這次實際解析到的依賴版本，確認沒問題後可下載 pubspec.lock 放進倉庫固定版本
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pubspec-lock
+          path: pubspec.lock
 
   android:
     needs: test
@@ -38,11 +50,57 @@ jobs:
       - name: Generate platform folders
         run: |
           if [ ! -d android ]; then
-            flutter create --platforms=android --project-name garage_log --org com.example .
+            flutter create --platforms=android --project-name garage_log --org "$APP_ORG" .
           fi
+      # 套用專屬圖示與桌面名稱「愛車記錄」（否則會是 Flutter 預設圖示）
+      - name: Apply branding
+        run: python3 tools/apply_branding.py android
       - run: flutter pub get
-      - run: dart run build_runner build --delete-conflicting-outputs
+      - run: dart run build_runner build
+      # 用固定的 release 金鑰簽章（金鑰放在 GitHub Secrets，見 README「Android 簽章」）。
+      # 沒設定 Secrets：一般 push 只警告（APK 用臨時除錯金鑰，不能覆蓋安裝）；
+      # 推 v* tag 發行時直接失敗，避免把無法升級的 APK 發出去。
+      - name: Configure release signing
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -z "$ANDROID_KEYSTORE_BASE64" ]; then
+            if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+              echo "::error::發行版必須設定 Android 簽章 Secrets（見 README「Android 簽章」）"
+              exit 1
+            fi
+            echo "::warning::尚未設定簽章 Secrets：這個 APK 使用臨時除錯金鑰，不能覆蓋安裝正式簽章的版本，僅供測試。"
+            exit 0
+          fi
+          python3 tools/configure_android_signing.py
       - run: flutter build apk --release
+      # 發行前核對：套件識別碼必須是固定值；印出簽章憑證與 SHA-256 指紋
+      # （請把指紋記下來；之後可設 Secret ANDROID_CERT_SHA256 讓 CI 自動比對）
+      - name: Verify APK (package id and signing certificate)
+        env:
+          EXPECTED_SHA256: ${{ secrets.ANDROID_CERT_SHA256 }}
+        run: |
+          APK=build/app/outputs/flutter-apk/app-release.apk
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -1)
+          PKG=$("${BT}aapt" dump badging "$APK" | sed -n "s/^package: name='\([^']*\)'.*/\1/p")
+          LABEL=$("${BT}aapt" dump badging "$APK" | sed -n "s/^application-label:'\(.*\)'$/\1/p")
+          echo "package id : $PKG"
+          echo "app label  : $LABEL"
+          if [ "$PKG" != "$APP_ID" ]; then
+            echo "::error::套件識別碼是 $PKG，預期 $APP_ID"; exit 1
+          fi
+          "${BT}apksigner" verify --print-certs "$APK" | tee certs.txt
+          SHA=$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' certs.txt | tr -d ' :' | tr 'A-F' 'a-f')
+          echo "::notice::簽章憑證 SHA-256 = $SHA"
+          if [ -n "$EXPECTED_SHA256" ]; then
+            EXP=$(echo "$EXPECTED_SHA256" | tr -d ' :' | tr 'A-F' 'a-f')
+            if [ "$SHA" != "$EXP" ]; then
+              echo "::error::簽章憑證與預期不符（預期 $EXP）"; exit 1
+            fi
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: garage_log-apk
@@ -61,10 +119,13 @@ jobs:
         shell: bash
         run: |
           if [ ! -d windows ]; then
-            flutter create --platforms=windows --project-name garage_log --org com.example .
+            flutter create --platforms=windows --project-name garage_log --org "$APP_ORG" .
           fi
+      - name: Apply branding
+        shell: bash
+        run: python tools/apply_branding.py windows
       - run: flutter pub get
-      - run: dart run build_runner build --delete-conflicting-outputs
+      - run: dart run build_runner build
       - run: flutter build windows --release
       - name: Zip release folder
         shell: pwsh
