@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.1 — 修正 0.4.0 的編譯錯誤
+
+- 修正 `flutter analyze` 錯誤：儲存保養單後刪除被移除照片的圖檔時，空值檢查寫法有誤（`maintenance_form.dart`）。
+- 移除多餘的 `dart:typed_data` 引入。功能與 0.4.0 相同。
+
 ## 0.4.0 — 保養可以附照片
 
 資料庫結構升級到 **v3**（新增 `maintenance_photos`），舊資料自動升級、不會遺失。新增依賴 `image`、`image_picker`。

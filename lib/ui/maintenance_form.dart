@@ -310,9 +310,11 @@ class _MaintenanceFormPageState extends ConsumerState<MaintenanceFormPage> {
           );
       _saved = true;
       // 儲存成功後，才把「被移除的既有照片」的圖檔刪掉
-      final store = _store ?? await ref.read(photoStoreProvider.future);
-      for (final f in _removedFiles) {
-        await store.delete(f);
+      if (_removedFiles.isNotEmpty) {
+        final PhotoStore store = await ref.read(photoStoreProvider.future);
+        for (final f in _removedFiles) {
+          await store.delete(f);
+        }
       }
       if (mounted) Navigator.of(context).pop();
     } on GarageValidationException catch (e) {
