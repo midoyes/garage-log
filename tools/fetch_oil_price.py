@@ -4,10 +4,11 @@
 App 只讀這個 JSON（格式固定）；中油網站改版時只需要改這支腳本，不必重新發布 APK / EXE。
 不依賴第三方套件。抓不到或解析失敗時以非 0 結束（Actions 會顯示紅燈），且不會覆蓋舊檔。
 """
+import html
 import json
+import re
 import sys
 import urllib.request
-import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -40,29 +41,36 @@ def key_of(name: str):
 
 
 def parse(body: bytes):
-    """容錯：任何含「產品名稱」子節點的元素都視為一列；價格欄位接受兩種命名。"""
-    root = ET.fromstring(body)
+    """用正規表示式抓「產品名稱」與其後最近的價格欄位。
+
+    中油回傳的 XML 曾經不是合法格式（標籤不成對），所以不用 XML 解析器；
+    回傳若是被跳脫過的文字（&lt;），先還原。
+    """
+    text = html.unescape(body.decode("utf-8", errors="replace"))
     prices, effective = {}, None
-    for row in root.iter():
-        kids = {c.tag.split("}")[-1]: (c.text or "").strip() for c in row}
-        name = kids.get("產品名稱")
-        if not name:
+    blocks = re.split(r"<產品名稱>", text)[1:]
+    for blk in blocks:
+        m = re.match(r"\s*([^<]+?)\s*</產品名稱>", blk)
+        if not m:
             continue
-        k = key_of(name)
-        raw = kids.get("參考牌價_金額") or kids.get("牌價") or ""
-        try:
-            price = float(raw)
-        except ValueError:
+        k = key_of(m.group(1))
+        pm = re.search(r"<(?:參考牌價_金額|牌價)>\s*([0-9]+(?:\.[0-9]+)?)\s*<", blk)
+        if k is None or not pm or k in prices:
             continue
-        if k is None or price <= 0 or k in prices:
+        price = float(pm.group(1))
+        if price <= 0:
             continue
         prices[k] = price
-        effective = effective or kids.get("牌價生效時間") or None
+        em = re.search(r"<牌價生效時間>\s*([^<]+?)\s*<", blk)
+        effective = effective or (em.group(1) if em else None)
     return prices, effective
 
 
 def main() -> None:
     body = fetch()
+    # 永遠印出開頭，方便從 Actions 日誌確認來源實際格式
+    print("來源回傳前 1500 字：")
+    print(body[:1500].decode("utf-8", errors="replace"))
     prices, effective = parse(body)
     if len(prices) < 3:
         print(f"::error::只解析到 {len(prices)} 種油品，來源格式可能改了。原始內容前 800 字：")

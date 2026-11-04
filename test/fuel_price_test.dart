@@ -20,6 +20,12 @@ void main() {
     const alt = '<r><UpdateData><產品名稱>95無鉛汽油</產品名稱><牌價>32.7</牌價></UpdateData></r>';
     expect(parseCpcPrices(alt)!.prices.single.price, 32.7);
   });
+  test('標籤不成對的壞 XML 也能容錯解析', () {
+    const bad = '<a><產品名稱>95無鉛汽油</產品名稱><參考牌價_金額>32.7</參考牌價_金額></b>'
+        '<產品名稱>92無鉛汽油</產品名稱><參考牌價_金額>31.2</參考牌價_金額>';
+    final s = parseCpcPrices(bad)!;
+    expect(s.prices.map((p) => p.price), [32.7, 31.2]);
+  });
   test('壞資料回傳 null 不丟例外', () {
     expect(parseCpcPrices('not xml'), isNull);
     expect(parseCpcPrices('<a/>'), isNull);

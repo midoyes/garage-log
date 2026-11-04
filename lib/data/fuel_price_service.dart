@@ -152,7 +152,8 @@ FuelPriceSnapshot? parseCpcPrices(String body, {DateTime? now}) {
   try {
     doc = XmlDocument.parse(body);
   } on XmlException {
-    return null;
+    // 中油回傳的 XML 曾經標籤不成對：改用正規表示式容錯解析
+    return _parseCpcLoose(body, now: now);
   }
   final prices = <FuelPrice>[];
   String? effective;
@@ -178,6 +179,35 @@ FuelPriceSnapshot? parseCpcPrices(String body, {DateTime? now}) {
     if (!keep) continue;
     prices.add(FuelPrice(name, price));
     effective ??= text('牌價生效時間');
+  }
+  if (prices.isEmpty) return null;
+  prices.sort((a, b) => _rank(a.name).compareTo(_rank(b.name)));
+  return FuelPriceSnapshot(
+      prices: prices, fetchedAt: now ?? DateTime.now(), effective: effective);
+}
+
+FuelPriceSnapshot? _parseCpcLoose(String body, {DateTime? now}) {
+  final prices = <FuelPrice>[];
+  String? effective;
+  final seen = <int>{};
+  for (final blk in body.split('<產品名稱>').skip(1)) {
+    final nm = RegExp(r'^\s*([^<]+?)\s*</產品名稱>').firstMatch(blk);
+    final pm = RegExp(r'<(?:參考牌價_金額|牌價)>\s*([0-9]+(?:\.[0-9]+)?)\s*<')
+        .firstMatch(blk);
+    if (nm == null || pm == null) continue;
+    final name = nm.group(1)!;
+    final price = double.tryParse(pm.group(1)!);
+    if (price == null || price <= 0) continue;
+    if (!(name.contains('98') ||
+        name.contains('95') ||
+        name.contains('92') ||
+        name.contains('柴油'))) {
+      continue;
+    }
+    if (!seen.add(_rank(name))) continue;
+    prices.add(FuelPrice(name, price));
+    effective ??=
+        RegExp(r'<牌價生效時間>\s*([^<]+?)\s*<').firstMatch(blk)?.group(1);
   }
   if (prices.isEmpty) return null;
   prices.sort((a, b) => _rank(a.name).compareTo(_rank(b.name)));
