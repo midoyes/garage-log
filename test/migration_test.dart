@@ -2,6 +2,7 @@ import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:garage_log/data/database.dart';
 import 'package:garage_log/data/repository.dart';
+import 'package:garage_log/domain/maintenance_calculator.dart';
 
 /// v1 的資料表結構（與 v1 版 App 建立的一致），用來驗證 v1 → v2 升級不遺失資料。
 const _v1Schema = [
@@ -100,10 +101,42 @@ void main() {
     expect(after.last.fuelType, '95');
   });
 
-  test('全新安裝直接建立 v2 結構', () async {
+  test('v1 一路升級到 v3：保養照片資料表與索引存在，可新增與讀取', () async {
+    final db = AppDatabase(
+      NativeDatabase.memory(
+        setup: (raw) {
+          for (final sql in _v1Schema) {
+            raw.execute(sql);
+          }
+          raw.execute('PRAGMA user_version = 1');
+        },
+      ),
+    );
+    addTearDown(db.close);
+    final repo = GarageRepository(db);
+    await repo.saveMaintenance(
+      id: 'm1',
+      vehicleId: 'v1',
+      date: DateTime(2026, 1, 1),
+      odometer: 650,
+      items: const [ItemInput(name: '機油', quantity: 2, unitPrice: 300)],
+      photos: const [PhotoInput(fileName: 'a.jpg', sizeBytes: 10)],
+    );
+    final photos = await repo.watchPhotos().first;
+    expect(photos.single.fileName, 'a.jpg');
+    expect(photos.single.recordId, 'm1');
+    final idx = await db
+        .customSelect(
+          "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_maint_photos_record'",
+        )
+        .get();
+    expect(idx, hasLength(1));
+  });
+
+  test('全新安裝直接建立 v3 結構', () async {
     final db = AppDatabase(NativeDatabase.memory());
     addTearDown(db.close);
-    expect(db.schemaVersion, 2);
+    expect(db.schemaVersion, 3);
     final id = await GarageRepository(db).addVehicle(
       type: 0,
       name: '新車',

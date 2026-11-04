@@ -7,6 +7,7 @@ import 'package:path/path.dart' as p;
 
 import '../domain/maintenance_calculator.dart';
 import 'database.dart';
+import 'photo_store.dart' show isSafePhotoName;
 
 /// 匯入 / 預覽 / 復原結果統計。
 class ImportReport {
@@ -46,6 +47,7 @@ class BackupPreview {
     required this.maintenanceRecords,
     required this.plans,
     required this.diff,
+    this.photos = 0,
   });
 
   /// 備份檔的匯出時間（無法解析時為 null）
@@ -56,6 +58,9 @@ class BackupPreview {
   final int fuelLogs;
   final int maintenanceRecords;
   final int plans;
+
+  /// 備份檔內未刪除的保養照片筆數（只含記錄，圖檔另外處理）
+  final int photos;
 
   /// 與本機合併後會發生的變動
   final ImportReport diff;
@@ -111,6 +116,7 @@ class _Snapshot {
     required this.records,
     required this.items,
     required this.plans,
+    required this.photos,
   });
 
   final List<Vehicle> vehicles;
@@ -118,6 +124,8 @@ class _Snapshot {
   final List<MaintenanceRecord> records;
   final List<MaintenanceItem> items;
   final List<MaintenancePlan> plans;
+  /// null = 備份檔（v2 以前）沒有照片資料表：合併 / 復原時完全不動本機的照片
+  final List<MaintenancePhoto>? photos;
 }
 
 /// 全資料庫 JSON 匯出 / 匯入（現階段的跨裝置手動同步方案）。
@@ -137,8 +145,8 @@ class BackupService {
 
   static const appId = 'garage_log';
 
-  /// v1：4 張表；v2：新增 maintenancePlans、油品欄位。
-  static const formatVersion = 2;
+  /// v1：4 張表；v2：新增 maintenancePlans、油品欄位；v3：新增 maintenancePhotos（只含照片記錄，不含圖檔）。
+  static const formatVersion = 3;
 
   static const _tablesV1 = [
     'vehicles',
@@ -166,6 +174,9 @@ class BackupService {
       'maintenancePlans': [
         for (final r in await db.select(db.maintenancePlans).get()) r.toJson()
       ],
+      'maintenancePhotos': [
+        for (final r in await db.select(db.maintenancePhotos).get()) r.toJson()
+      ],
     };
   }
 
@@ -192,7 +203,11 @@ class BackupService {
     if (version is! int || version < 1 || version > formatVersion) {
       throw const FormatException('備份檔版本不支援，請先更新 App');
     }
-    final mustHave = [..._tablesV1, if (version >= 2) 'maintenancePlans'];
+    final mustHave = [
+      ..._tablesV1,
+      if (version >= 2) 'maintenancePlans',
+      if (version >= 3) 'maintenancePhotos',
+    ];
     for (final key in mustHave) {
       if (data[key] is! List) {
         throw FormatException('備份檔不完整：缺少「$key」資料或格式錯誤');
@@ -265,6 +280,15 @@ class BackupService {
     return null;
   }
 
+  static String? _checkPhoto(MaintenancePhoto r) {
+    final c = _commonCheck(r.id, r.createdAt, r.updatedAt);
+    if (c != null) return c;
+    if (r.sizeBytes < 0) return '有照片的檔案大小無效';
+    if (r.isDeleted) return null;
+    if (!isSafePhotoName(r.fileName)) return '有照片的檔名不合法';
+    return null;
+  }
+
   List<D> _rows<D>(
     Object? raw,
     D Function(Map<String, dynamic>) fromJson,
@@ -298,6 +322,10 @@ class BackupService {
             MaintenanceItem.fromJson, const {}, _checkItem),
         plans: _rows<MaintenancePlan>(data['maintenancePlans'],
             MaintenancePlan.fromJson, const {}, _checkPlan),
+        photos: data['maintenancePhotos'] == null
+            ? null
+            : _rows<MaintenancePhoto>(data['maintenancePhotos'],
+                MaintenancePhoto.fromJson, const {}, _checkPhoto),
       );
     } on TypeError {
       throw const FormatException('備份檔內容格式錯誤（欄位型態不符）');
@@ -324,6 +352,7 @@ class BackupService {
       fuelLogs: _liveCount(data['fuelLogs']),
       maintenanceRecords: _liveCount(data['maintenanceRecords']),
       plans: _liveCount(data['maintenancePlans']),
+      photos: _liveCount(data['maintenancePhotos']),
       diff: report,
     );
   }
@@ -358,6 +387,14 @@ class BackupService {
             db.maintenanceItems, s.items, (r) => r.id, (r) => r.updatedAt, report);
         await _merge<$MaintenancePlansTable, MaintenancePlan>(
             db.maintenancePlans, s.plans, (r) => r.id, (r) => r.updatedAt, report);
+        if (s.photos != null) {
+          await _merge<$MaintenancePhotosTable, MaintenancePhoto>(
+              db.maintenancePhotos,
+              s.photos!,
+              (r) => r.id,
+              (r) => r.updatedAt,
+              report);
+        }
 
         report.repaired += await repairIntegrity();
         report.anomalies = await countAnomalies();
@@ -447,6 +484,11 @@ class BackupService {
       'maintenance_plans',
       'vehicle_id IN (SELECT id FROM vehicles WHERE is_deleted = 1)',
       db.maintenancePlans,
+    );
+    fixed += await cascade(
+      'maintenance_photos',
+      'record_id IN (SELECT id FROM maintenance_records WHERE is_deleted = 1)',
+      db.maintenancePhotos,
     );
     fixed += await cascade(
       'maintenance_items',
@@ -553,6 +595,9 @@ class BackupService {
           db.maintenanceRecords, s.records, (r) => r.id, (r) => r.isDeleted),
       await one<$MaintenancePlansTable, MaintenancePlan>(
           '保養週期', db.maintenancePlans, s.plans, (r) => r.id, (r) => r.isDeleted),
+      if (s.photos != null)
+        await one<$MaintenancePhotosTable, MaintenancePhoto>('保養照片',
+            db.maintenancePhotos, s.photos!, (r) => r.id, (r) => r.isDeleted),
     ]);
   }
 
@@ -592,6 +637,11 @@ class BackupService {
           (r) => r.id,
           (r) => r.updatedAt,
           now);
+      if (s.photos != null) {
+        report.added += await _restoreTable<$MaintenancePhotosTable,
+                MaintenancePhoto>(db.maintenancePhotos, 'maintenance_photos',
+            s.photos!, (r) => r.id, (r) => r.updatedAt, now);
+      }
       report.repaired += await repairIntegrity();
       report.anomalies = await countAnomalies();
     });

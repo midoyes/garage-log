@@ -177,7 +177,9 @@ class SettingsPage extends ConsumerWidget {
                     const SizedBox(width: 6),
                     Expanded(
                       child: Text(
-                        '備份檔內含車牌、里程與維修紀錄且未加密，請妥善保管，不要傳到公開的地方。',
+                        '備份檔內含車牌、里程與維修紀錄且未加密，請妥善保管，不要傳到公開的地方。'
+                        '\n注意：JSON 備份只包含「保養有哪些照片」的記錄，不含圖檔本身；'
+                        '照片檔目前只存在這台裝置，之後的 Google 雲端同步版本會一併處理。',
                         style: theme.textTheme.bodySmall,
                       ),
                     ),

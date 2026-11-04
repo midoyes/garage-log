@@ -8,6 +8,7 @@ import '../providers.dart';
 import 'common.dart';
 import 'format.dart';
 import 'navigation.dart';
+import 'photo_widgets.dart';
 import 'reminder_widgets.dart';
 
 class MaintenancePage extends ConsumerStatefulWidget {
@@ -248,6 +249,51 @@ class _MaintenanceCard extends ConsumerWidget {
               if (r.note.isNotEmpty) ...[
                 const SizedBox(height: 6),
                 Text(r.note, style: theme.textTheme.bodySmall),
+              ],
+              if (ref.watch(photosByRecordProvider).valueOrNull?[r.id]
+                  case final photos? when photos.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Padding(
+                  padding: const EdgeInsets.only(right: 12),
+                  child: Wrap(
+                    spacing: 6,
+                    runSpacing: 6,
+                    children: [
+                      for (var i = 0; i < photos.length && i < 4; i++)
+                        Stack(
+                          children: [
+                            PhotoThumb(
+                              fileName: photos[i].fileName,
+                              size: 64,
+                              onTap: () => openPhotoViewer(
+                                context,
+                                [for (final x in photos) x.fileName],
+                                i,
+                              ),
+                            ),
+                            if (i == 3 && photos.length > 4)
+                              Positioned.fill(
+                                child: IgnorePointer(
+                                  child: Container(
+                                    decoration: BoxDecoration(
+                                      color: Colors.black54,
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                    alignment: Alignment.center,
+                                    child: Text(
+                                      '+${photos.length - 3}',
+                                      style: const TextStyle(
+                                          color: Colors.white,
+                                          fontWeight: FontWeight.bold),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+                    ],
+                  ),
+                ),
               ],
             ],
           ),

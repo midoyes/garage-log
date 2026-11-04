@@ -8,6 +8,7 @@ import '../domain/maintenance_calculator.dart';
 import '../domain/reminders.dart';
 import 'clock.dart';
 import 'database.dart';
+import 'photo_store.dart' show isSafePhotoName;
 
 /// 輸入資料不合法（里程防呆、欄位範圍等）。
 class GarageValidationException implements Exception {
@@ -16,6 +17,15 @@ class GarageValidationException implements Exception {
 
   @override
   String toString() => message;
+}
+
+/// 儲存保養單時帶入的照片清單項目。
+/// [id] 為既有照片的 UUID（保留）；null 代表新增（[fileName] 是已存好的圖檔）。
+class PhotoInput {
+  const PhotoInput({this.id, required this.fileName, this.sizeBytes = 0});
+  final String? id;
+  final String fileName;
+  final int sizeBytes;
 }
 
 /// 保養單 + 明細
@@ -209,6 +219,13 @@ class GarageRepository {
       await _softDeleteSql(
         db.maintenanceItems,
         'maintenance_items',
+        'record_id IN (SELECT id FROM maintenance_records WHERE vehicle_id = ?)',
+        v,
+        now,
+      );
+      await _softDeleteSql(
+        db.maintenancePhotos,
+        'maintenance_photos',
         'record_id IN (SELECT id FROM maintenance_records WHERE vehicle_id = ?)',
         v,
         now,
@@ -407,9 +424,15 @@ class GarageRepository {
     required double odometer,
     required List<ItemInput> items,
     String note = '',
+    List<PhotoInput>? photos,
   }) async {
     if (!odometer.isFinite || odometer < 0) {
       throw const GarageValidationException('里程必須是不小於 0 的數字');
+    }
+    for (final ph in photos ?? const <PhotoInput>[]) {
+      if (!isSafePhotoName(ph.fileName)) {
+        throw const GarageValidationException('照片檔名不合法');
+      }
     }
     if (items.isEmpty) throw const GarageValidationException('請至少輸入一個保養項目');
     for (final i in items) {
@@ -536,8 +559,70 @@ class GarageRepository {
               );
         }
       }
+
+      // 照片：null = 不動；否則以傳入清單為準（沒出現的舊照片軟刪除）
+      if (photos != null) {
+        final oldPhotos = await (db.select(db.maintenancePhotos)
+              ..where((t) =>
+                  t.recordId.equals(recordId) & t.isDeleted.equals(false)))
+            .get();
+        final oldPById = {for (final o in oldPhotos) o.id: o};
+        for (final ph in photos) {
+          if (ph.id != null && !oldPById.containsKey(ph.id)) {
+            throw const GarageValidationException('照片不屬於這張保養單，請重新開啟後再編輯');
+          }
+        }
+        final keep = photos.map((x) => x.id).whereType<String>().toSet();
+        for (final old in oldPhotos) {
+          if (!keep.contains(old.id)) {
+            await (db.update(db.maintenancePhotos)
+                  ..where((t) => t.id.equals(old.id)))
+                .write(MaintenancePhotosCompanion(
+              isDeleted: const Value(true),
+              updatedAt: Value(_stamp(old.updatedAt)),
+            ));
+          }
+        }
+        for (var i = 0; i < photos.length; i++) {
+          final ph = photos[i];
+          if (ph.id != null) {
+            final old = oldPById[ph.id]!;
+            if (old.sortOrder != i) {
+              await (db.update(db.maintenancePhotos)
+                    ..where((t) => t.id.equals(old.id)))
+                  .write(MaintenancePhotosCompanion(
+                sortOrder: Value(i),
+                updatedAt: Value(_stamp(old.updatedAt)),
+              ));
+            }
+          } else {
+            await db.into(db.maintenancePhotos).insert(
+                  MaintenancePhotosCompanion.insert(
+                    id: _uuid.v4(),
+                    createdAt: now,
+                    updatedAt: now,
+                    recordId: recordId,
+                    fileName: ph.fileName,
+                    sizeBytes: Value(ph.sizeBytes),
+                    sortOrder: Value(i),
+                  ),
+                );
+          }
+        }
+      }
     });
     return recordId;
+  }
+
+  /// 所有未刪除的保養照片（依保養單分組由畫面處理）。
+  Stream<List<MaintenancePhoto>> watchPhotos() {
+    final q = db.select(db.maintenancePhotos)
+      ..where((t) => t.isDeleted.equals(false))
+      ..orderBy([
+        (t) => OrderingTerm.asc(t.sortOrder),
+        (t) => OrderingTerm.asc(t.createdAt),
+      ]);
+    return q.watch();
   }
 
   Future<void> deleteMaintenance(String id) async {
@@ -548,6 +633,8 @@ class GarageRepository {
           .getSingleOrNull();
       if (record == null) return;
       await _softDeleteSql(db.maintenanceItems, 'maintenance_items',
+          'record_id = ?', [Variable.withString(id)], now);
+      await _softDeleteSql(db.maintenancePhotos, 'maintenance_photos',
           'record_id = ?', [Variable.withString(id)], now);
       await (db.update(db.maintenanceRecords)..where((t) => t.id.equals(id)))
           .write(MaintenanceRecordsCompanion(

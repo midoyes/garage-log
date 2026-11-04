@@ -1,7 +1,10 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:path/path.dart' as path;
+import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'data/backup_service.dart';
@@ -9,6 +12,7 @@ import 'data/connection.dart';
 import 'data/csv_export.dart';
 import 'data/database.dart';
 import 'data/fuel_price_service.dart';
+import 'data/photo_store.dart';
 import 'data/repository.dart';
 import 'data/sync_service.dart';
 import 'domain/reminders.dart';
@@ -233,4 +237,23 @@ final fuelPriceServiceProvider = Provider((ref) => FuelPriceService());
 final fuelPriceProvider = FutureProvider<FuelPriceSnapshot?>((ref) async {
   if (!ref.watch(fuelPriceEnabledProvider)) return null;
   return ref.read(fuelPriceServiceProvider).fetch();
+});
+
+
+/// 保養照片的檔案儲存（App 私有資料夾 garage_log/photos）。
+final photoStoreProvider = FutureProvider<PhotoStore>((ref) async {
+  final dir = await getApplicationDocumentsDirectory();
+  return PhotoStore(Directory(path.join(dir.path, 'garage_log', 'photos')));
+});
+
+/// 所有未刪除的保養照片，依保養單 id 分組（組內依排序）。
+final photosByRecordProvider =
+    StreamProvider<Map<String, List<MaintenancePhoto>>>((ref) {
+  return ref.watch(repoProvider).watchPhotos().map((list) {
+    final m = <String, List<MaintenancePhoto>>{};
+    for (final ph in list) {
+      (m[ph.recordId] ??= []).add(ph);
+    }
+    return m;
+  });
 });

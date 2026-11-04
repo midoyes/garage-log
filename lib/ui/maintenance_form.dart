@@ -1,13 +1,19 @@
+import 'dart:io';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:image_picker/image_picker.dart';
 
 import '../data/database.dart';
+import '../data/photo_store.dart';
 import '../data/repository.dart';
 import '../domain/fuel_calculator.dart';
 import '../domain/maintenance_calculator.dart';
 import '../providers.dart';
 import 'common.dart';
 import 'format.dart';
+import 'photo_widgets.dart';
 
 /// 表單內的一列明細（持有自己的 controller）。
 class _Row {
@@ -39,6 +45,14 @@ class _Row {
   }
 }
 
+/// 表單內的一張照片：[id] 有值 = 已存在資料庫；null = 這次新增的。
+class _FormPhoto {
+  _FormPhoto({this.id, required this.fileName, this.size = 0});
+  final String? id;
+  final String fileName;
+  final int size;
+}
+
 class MaintenanceFormPage extends ConsumerStatefulWidget {
   const MaintenanceFormPage({super.key, required this.vehicle, this.existing});
 
@@ -60,6 +74,19 @@ class _MaintenanceFormPageState extends ConsumerState<MaintenanceFormPage> {
   /// 使用者是否自己動過里程欄位（動過就不再依日期自動帶入）
   bool _odoTouched = false;
 
+  // ── 照片 ──
+  final List<_FormPhoto> _photos = [];
+
+  /// 本次新增、尚未存進資料庫的圖檔；放棄編輯時要刪掉，避免留下垃圾檔案
+  final List<String> _addedFiles = [];
+
+  /// 編輯時被移除的「既有」照片的圖檔；儲存成功後才刪
+  final List<String> _removedFiles = [];
+  bool _photosLoaded = false;
+  bool _busy = false;
+  bool _saved = false;
+  PhotoStore? _store;
+
   @override
   void initState() {
     super.initState();
@@ -76,6 +103,11 @@ class _MaintenanceFormPageState extends ConsumerState<MaintenanceFormPage> {
           : (currentOdo != null && currentOdo > 0 ? trimNum(currentOdo) : ''),
     );
     _note = TextEditingController(text: e?.record.note ?? '');
+    if (e == null) {
+      _photosLoaded = true;
+    } else {
+      _loadPhotos(e.record.id);
+    }
     if (e != null) {
       for (final i in e.items) {
         _rows.add(_Row(
@@ -88,8 +120,93 @@ class _MaintenanceFormPageState extends ConsumerState<MaintenanceFormPage> {
     }
   }
 
+  /// 編輯時載入這張保養單既有的照片。載入完成前不會把照片清單送去儲存（避免誤刪）。
+  Future<void> _loadPhotos(String recordId) async {
+    try {
+      final all = await ref.read(repoProvider).watchPhotos().first;
+      if (!mounted) return;
+      setState(() {
+        _photos.addAll([
+          for (final ph in all)
+            if (ph.recordId == recordId)
+              _FormPhoto(id: ph.id, fileName: ph.fileName, size: ph.sizeBytes),
+        ]);
+        _photosLoaded = true;
+      });
+    } catch (_) {
+      // 讀不到照片時維持 _photosLoaded = false：儲存時不動照片
+    }
+  }
+
+  Future<void> _importPaths(List<String> paths) async {
+    final store = await ref.read(photoStoreProvider.future);
+    _store = store;
+    if (!mounted) return;
+    setState(() => _busy = true);
+    var failed = 0;
+    for (final path in paths) {
+      try {
+        final bytes = await File(path).readAsBytes();
+        final r = await store.addFromBytes(bytes);
+        _addedFiles.add(r.fileName);
+        if (!mounted) {
+          await store.delete(r.fileName);
+          return;
+        }
+        setState(() => _photos.add(_FormPhoto(fileName: r.fileName, size: r.size)));
+      } catch (_) {
+        failed++;
+      }
+    }
+    if (!mounted) return;
+    setState(() => _busy = false);
+    if (failed > 0) showSnack(context, '有 $failed 張照片無法讀取，已略過');
+  }
+
+  Future<void> _pickFromFiles() async {
+    final res = await FilePicker.platform
+        .pickFiles(type: FileType.image, allowMultiple: true);
+    if (res == null) return;
+    await _importPaths([
+      for (final f in res.files)
+        if (f.path != null) f.path!,
+    ]);
+  }
+
+  Future<void> _takePhoto() async {
+    try {
+      final x = await ImagePicker().pickImage(
+        source: ImageSource.camera,
+        maxWidth: 2400,
+        maxHeight: 2400,
+        imageQuality: 90,
+      );
+      if (x == null) return;
+      await _importPaths([x.path]);
+    } catch (e) {
+      if (mounted) showSnack(context, '無法開啟相機：$e');
+    }
+  }
+
+  void _removePhoto(_FormPhoto ph) {
+    setState(() => _photos.remove(ph));
+    if (ph.id == null) {
+      // 這次才加的：直接刪檔
+      _addedFiles.remove(ph.fileName);
+      _store?.delete(ph.fileName);
+    } else {
+      _removedFiles.add(ph.fileName);
+    }
+  }
+
   @override
   void dispose() {
+    if (!_saved) {
+      // 放棄編輯：把這次新增、沒存進資料庫的圖檔刪掉
+      for (final f in _addedFiles) {
+        _store?.delete(f);
+      }
+    }
     _odo.dispose();
     _note.dispose();
     for (final r in _rows) {
@@ -169,6 +286,10 @@ class _MaintenanceFormPageState extends ConsumerState<MaintenanceFormPage> {
 
   Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
+    if (_busy) {
+      showSnack(context, '照片處理中，請稍候');
+      return;
+    }
     try {
       await ref.read(repoProvider).saveMaintenance(
             id: widget.existing?.record.id,
@@ -180,7 +301,19 @@ class _MaintenanceFormPageState extends ConsumerState<MaintenanceFormPage> {
                 if (!r.isBlank) r.toInput(),
             ],
             note: _note.text,
+            photos: _photosLoaded
+                ? [
+                    for (final ph in _photos)
+                      PhotoInput(id: ph.id, fileName: ph.fileName, sizeBytes: ph.size),
+                  ]
+                : null,
           );
+      _saved = true;
+      // 儲存成功後，才把「被移除的既有照片」的圖檔刪掉
+      final store = _store ?? await ref.read(photoStoreProvider.future);
+      for (final f in _removedFiles) {
+        await store.delete(f);
+      }
       if (mounted) Navigator.of(context).pop();
     } on GarageValidationException catch (e) {
       if (mounted) showSnack(context, e.message);
@@ -289,6 +422,72 @@ class _MaintenanceFormPageState extends ConsumerState<MaintenanceFormPage> {
                 controller: _note,
                 decoration: fieldDecoration('備註（選填）'),
                 maxLines: 2,
+              ),
+              const SizedBox(height: 20),
+              Row(
+                children: [
+                  Text('照片（${_photos.length}）', style: theme.textTheme.titleSmall),
+                  const Spacer(),
+                  if (Platform.isAndroid)
+                    TextButton.icon(
+                      onPressed: _busy ? null : _takePhoto,
+                      icon: const Icon(Icons.photo_camera_outlined),
+                      label: const Text('拍照'),
+                    ),
+                  TextButton.icon(
+                    onPressed: _busy ? null : _pickFromFiles,
+                    icon: const Icon(Icons.add_photo_alternate_outlined),
+                    label: Text(Platform.isAndroid ? '相簿' : '選擇照片'),
+                  ),
+                ],
+              ),
+              if (_photos.isEmpty && !_busy)
+                Text(
+                  '可附上單據、零件或維修前後的照片（不限張數，會自動縮小以節省空間）',
+                  style: theme.textTheme.bodySmall,
+                ),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  for (var i = 0; i < _photos.length; i++)
+                    Stack(
+                      key: ValueKey(_photos[i].fileName),
+                      children: [
+                        PhotoThumb(
+                          fileName: _photos[i].fileName,
+                          size: 88,
+                          onTap: () => openPhotoViewer(
+                            context,
+                            [for (final x in _photos) x.fileName],
+                            i,
+                          ),
+                        ),
+                        Positioned(
+                          right: 0,
+                          top: 0,
+                          child: Material(
+                            color: Colors.black54,
+                            shape: const CircleBorder(),
+                            child: InkWell(
+                              customBorder: const CircleBorder(),
+                              onTap: () => _removePhoto(_photos[i]),
+                              child: const Padding(
+                                padding: EdgeInsets.all(4),
+                                child: Icon(Icons.close, size: 16, color: Colors.white),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  if (_busy)
+                    const SizedBox(
+                      width: 88,
+                      height: 88,
+                      child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+                    ),
+                ],
               ),
             ],
           ),

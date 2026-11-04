@@ -85,3 +85,18 @@ class MaintenancePlans extends Table with SyncColumns {
   /// 日期週期（天）；0 = 不依日期提醒
   IntColumn get intervalDays => integer().withDefault(const Constant(0))();
 }
+
+/// 保養單附的照片（不限張數）。v3 新增。
+///
+/// 資料庫只記錄「有哪些照片」；圖檔存在 App 私有資料夾的 photos/ 底下，
+/// 檔名是 [fileName]（UUID + .jpg，不含路徑）。
+@TableIndex(name: 'idx_maint_photos_record', columns: {#recordId})
+@TableIndex(name: 'idx_maint_photos_updated', columns: {#updatedAt})
+class MaintenancePhotos extends Table with SyncColumns {
+  TextColumn get recordId => text()();
+
+  /// 圖檔檔名（只能是英數、底線、連字號、點；不可含路徑）
+  TextColumn get fileName => text()();
+  IntColumn get sizeBytes => integer().withDefault(const Constant(0))();
+  IntColumn get sortOrder => integer().withDefault(const Constant(0))();
+}
