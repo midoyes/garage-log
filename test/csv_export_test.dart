@@ -66,7 +66,7 @@ void main() {
       await repo.saveMaintenance(
         vehicleId: vid,
         date: DateTime(2026, 1, 5),
-        odometer: 1500,
+        odometer: 1200,
         items: const [
           ItemInput(name: '機油', quantity: 2, unitPrice: 300),
           ItemInput(name: '工資', quantity: 1, unitPrice: 200),
@@ -87,8 +87,8 @@ void main() {
 
     test('保養 CSV：每個明細一列，整張單總額重複出現', () async {
       final csv = await CsvExporter(db).maintenanceCsv();
-      expect(csv, contains('愛車,2026-01-05,1500,機油,2,300,600,800,'));
-      expect(csv, contains('愛車,2026-01-05,1500,工資,1,200,200,800,'));
+      expect(csv, contains('愛車,2026-01-05,1200,機油,2,300,600,800,'));
+      expect(csv, contains('愛車,2026-01-05,1200,工資,1,200,200,800,'));
     });
 
     test('已刪除的車輛不會出現在匯出', () async {
