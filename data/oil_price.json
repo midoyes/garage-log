@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "updated_at": "2026-11-10",
+  "updated_at": "2026-11-11",
   "source": "台灣中油 ListPriceWebService",
   "current": {
     "effective": "2026-11-02",
@@ -27,9 +27,9 @@
     "status": "estimate",
     "week_start": "2026-11-16",
     "trend": "down",
-    "index_change_pct": -7.01,
-    "days_known": 1,
+    "index_change_pct": -7.58,
+    "days_known": 2,
     "basis": "布蘭特替代杜拜（免費版），未計政策吸收",
-    "updated": "2026-11-10"
+    "updated": "2026-11-11"
   }
 }
