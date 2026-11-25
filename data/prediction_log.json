@@ -124,5 +124,12 @@
   "trend": "down",
   "pct": -5.53,
   "days": 1
+ },
+ {
+  "date": "2026-11-25",
+  "week_start": "2026-11-30",
+  "trend": "down",
+  "pct": -2.18,
+  "days": 2
  }
 ]
